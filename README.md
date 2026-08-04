@@ -30,12 +30,12 @@ code in this repo.
   [`src/market.py`](src/market.py) resolves it; 23 tests in
   [`tests/test_settlement.py`](tests/test_settlement.py) check it against
   hand-worked examples and a sign-convention property test.
-- **Publication lags catalogued** per series, including the one that is *not
-  constant over history* — see Limitations.
+- **Publication lags catalogued** per series, each confidence-tagged, with the
+  one unresolved lag left `null` rather than guessed — see Limitations.
 
 ## Limitations
 
-Read [`LIMITATIONS.md`](LIMITATIONS.md) before anything else. The two that
+Read [`LIMITATIONS.md`](LIMITATIONS.md) before anything else. The three that
 currently matter most:
 
 1. **The regulation state changed meaning on 2026-02-03** — determined from the
