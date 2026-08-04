@@ -21,7 +21,11 @@ loud rather than smoothed over.
 
 | Ref | Document | Type |
 |---|---|---|
-| **[IPS6]** | TenneT TSO B.V., *Imbalance Pricing System: how are the (directions of) payment determined?*, **version 6.0, 30 March 2022**. [PDF](https://tennet-drupal.s3.eu-central-1.amazonaws.com/default/2022-06/Imbalance_pricing_system_0.pdf) | Primary (TSO) |
+| **[IPS61]** | TenneT TSO B.V., *Imbalance Pricing System: how are the (directions of) payment determined?*, **version 6.1, 21 October 2024** — changelog: *"Clarification on PICASSO impact"*. [`docs/refs/`](refs/TenneT_Imbalance_Pricing_System_v6.1_2024-10-21.pdf) | Primary (TSO) |
+| [IPS6] | Same document, **version 6.0, 30 March 2022**. Retained only for the v6.0→v6.1 diff. [PDF](https://tennet-drupal.s3.eu-central-1.amazonaws.com/default/2022-06/Imbalance_pricing_system_0.pdf) | Primary (TSO) |
+| **[STCRT]** | Staatscourant 2024 nr. 29868, cited by [IPS61] fn.14 as the legal basis for the PICASSO price-determination clarification. [Link](https://zoek.officielebekendmakingen.nl/stcrt-2024-29868.html) | Primary (NL gazette) |
+| **[TNT-12S]** | TenneT news, *"Balance delta now published every 12 seconds"*, 25 Nov 2025. | Primary (TSO) |
+| **[TNT-MU]** | TenneT, *"Market update at a glance"*, 28 Oct 2025; *"Q1 Balancing Market Update"*, 20 Feb 2026. | Primary (TSO) |
 | **[REG543]** | Commission Regulation (EU) No 543/2013 on submission and publication of data in electricity markets. [EUR-Lex](https://eur-lex.europa.eu/eli/reg/2013/543/oj/eng) | Primary (EU law) |
 | **[EBGL]** | Commission Regulation (EU) 2017/2195 establishing a guideline on electricity balancing. | Primary (EU law) |
 | **[ACM2022]** | ACM, *Goedkeuring dubbele prijsstelling voor onbalansverrekening*, ref. ACM/UIT/570957, case ACM/21/052864, decision 2 March 2022. [PDF](https://www.acm.nl/sites/default/files/documents/goedkeuring-dubbele-prijsstelling-voor-onbalansverrekening.pdf) | Primary (regulator) |
@@ -31,11 +35,17 @@ loud rather than smoothed over.
 | *[sec-comcam]* | COMCAM, "TenneT shortens imbalance market delay and increases price resolution" | Secondary |
 | *[sec-ess]* | ess-news.com, Dutch grid-connection and battery capacity reporting, 2025 | Secondary |
 
-> **Caveat that colours everything below.** [IPS6] is dated **30 March 2022** and is
-> the most recent version of TenneT's pricing methodology I was able to locate.
-> It therefore **predates the Netherlands joining PICASSO on 18 October 2024**.
-> I could not confirm whether a version 7.0 exists. See [Q5](#q5) and
-> [Open questions](#open-questions-for-you).
+> **Update, post-review.** The original draft of this document flagged as its
+> largest open risk that [IPS6] (March 2022) predated PICASSO. **Resolved:**
+> **v6.1, dated 21 October 2024**, was retrieved manually and is now the
+> governing source. Its sole substantive change is the PICASSO clarification,
+> and it *confirms* that price formation did not change. See [Q5](#q5).
+>
+> A second correction from the same review: an earlier version of Q7 below
+> asserted a 3 → 5 → 2 minute balance-delta publication-**delay** timeline from
+> trade press. Manual review of TenneT's own pages found only **cadence**
+> changes. Those are different mechanisms and the claim has been withdrawn.
+> See [Q7](#q7).
 
 ---
 
@@ -211,26 +221,37 @@ price-setting bid is the marginal (last, most extreme) activated one.
   to TenneT's financial residue but **does not** change the BRP's imbalance
   price ([IPS6] §6.1).
 
-> ### ⚠ The one thing most likely to invalidate this project
+> ### ✅ PICASSO — RESOLVED, and the answer is the favourable one
 >
-> [IPS6] v6.0 predates the Netherlands joining **PICASSO** (the European aFRR
-> platform) on **18 October 2024**. Secondary sources *[sec-timera]*,
-> *[sec-dexter]* report that TenneT deliberately **kept setting the imbalance
-> price from the domestic marginal activated bid** rather than adopting
-> PICASSO's Cross-Border Marginal Price — unlike Terna, whose adoption of CBMP
-> caused the Italian price disruption that led to its March 2024 suspension.
-> If that reporting is right, [IPS6] §4.2 still holds and the rule table is
-> valid across the whole sample.
+> [IPS61] **v6.1 (21 October 2024)** was published three days after the
+> Netherlands joined PICASSO, for the sole purpose of clarifying its impact.
+> A v6.0→v6.1 diff shows the change is *additive*: §4.2's three original
+> pricing bullets are untouched and Table 2 is unchanged. What v6.1 adds:
 >
-> **I have not verified this against a TenneT or ACM document.** It is
-> **SECONDARY**. It is also load-bearing: if TenneT *did* switch to CBMP, the
-> price formation rule differs before and after 2024-10-18 and every model
-> trained across that boundary is trained on two different targets.
+> §4.2, new fourth bullet:
+> > "The CBMP determined by the PICASSO platform is **not explicitly taken into
+> > account in the price determination**." (fn.14 → [STCRT])
 >
-> The same sources report imbalance price **volatility roughly halved** after
-> PICASSO go-live. Even under the favourable reading — rules unchanged — the
-> *distribution* shifted hard. 2024-10-18 is registered as a structural break
-> in `config/market_rules.yaml` and results must be segmented across it.
+> §4.3, new closing sentence:
+> > "There is **no direct impact** of participation in IGCC or PICASSO on the
+> > **regulation state**."
+>
+> Plus a new §3.4 explaining that PICASSO relocates the residual power imbalance
+> "to the area with the most economical bids on the local merit order", and is
+> preferred over IGCC netting because it can take prices into account.
+>
+> **Consequence: the rule table is valid across the whole sample.** Price
+> formation and state determination did not change on 2024-10-18, and the
+> pre-PICASSO history remains usable. This removes the risk that usable history
+> collapses to ~22 months.
+>
+> **But the distribution shifted, and §3.4 explains the mechanism.** If the
+> residual imbalance is relocated to whichever area has the cheapest bids, the
+> domestic merit order is walked less far in either direction — so the marginal
+> activated bid is less extreme, which is precisely the ~50% volatility drop the
+> secondary sources report. Rules unchanged, distribution materially changed.
+> 2024-10-18 stays registered as a structural break and results must be
+> segmented across it.
 
 ### Q6 — Price caps, floors, scarcity rules — **SECONDARY** ⚠
 
@@ -265,7 +286,7 @@ Lag is measured from the **end** of the period described to first retrievability
 
 | Series | Cadence | Lag | Confidence | Source |
 |---|---|---|---|---|
-| Balance delta | 12 s (from ~Nov 2025) | **2–5 min, time-varying** | SECONDARY ⚠ | *[sec-comcam]*, [IPS6] fn.15 |
+| Balance delta | **12 s** (from 2025-11-25; 1 min before) | **UNRESOLVED — must be measured, not assumed** | cadence PRIMARY, lag UNRESOLVED ⚠ | [TNT-12S], [IPS61] fn.16 |
 | Imbalance price — real-time estimate | ~1 min | ~2 min | SECONDARY | *[sec-dexter]* |
 | **Imbalance price — settled** | 15 min | **D+1 from 10:00 CET** | **PRIMARY** | [IPS6] §3.2 |
 | Regulation state (settled) | 15 min | D+1 (with the settled price) | PRIMARY | [IPS6] §3.2 |
@@ -295,32 +316,78 @@ Conflating them is the single easiest way to leak look-ahead into this project,
 and it would look like a spectacular model. `data_availability.py` must treat
 them as two distinct fields with different lags, not one field.
 
-#### ⚠ The balance-delta lag is not constant, and that is a genuine problem
+#### ⚠ Cadence is not delay — a claim withdrawn {#q7}
 
-Reconstructed from secondary sources, and the reason it must be flagged:
+**An earlier draft of this section asserted a 3 → 5 → 2 minute balance-delta
+publication *delay* timeline, sourced from trade press. That claim is
+withdrawn.** Manual review of TenneT's own pages found no support for it.
 
-| Date | Change |
-|---|---|
-| before Dec 2024 | ~3 min publication delay, 1 update/min |
-| Dec 2024 | delay **increased to 5 min** — a deliberate TenneT intervention to damp over-aggressive passive balancing |
-| 1 July 2025 | delay **reduced to 2 min** (the 5-min experiment did not achieve its aim) |
-| ~Nov 2025 | cadence increased to **every 12 s** |
+The distinction matters and TenneT's own text observes it:
 
-**Why this matters more than it appears.** The lag is not a data-pipeline
-detail — it is the **width of the information window a passive-balancing
-strategy is allowed to exploit**, and TenneT changed it *specifically to alter
-strategy profitability*. A backtest applying today's 2-minute lag to 2024 data
-grants the strategy information that did not exist then, and inflates revenue in
-exactly the periods the intervention targeted. `data_availability.py` must take
-the lag as a **function of the target timestamp**, not a constant.
+- **Cadence** — how often a new value is published (1/min → 5/min → every 12 s).
+- **Delay** — how long after the instant it describes a value becomes visible.
 
-**Conflict, stated openly.** One source reports the 2→5 minute increase as
-happening "in November"; another places the 3→5 increase in December 2024 and
-the rollback to 2 minutes on 1 July 2025. These are reconcilable if the first
-refers to a November **2024** announcement of the December change — but I could
-not confirm that. **All of these dates are SECONDARY and need TenneT release
-notes before the backtest is trusted.** (`tennet.eu` returned HTTP 403 to
-automated fetching throughout; retrieving these needs a manual visit.)
+A frequency increase is not a lag reduction. Treating one as the other
+misattributes the mechanism, and would mis-specify the exact quantity the
+backtest is most sensitive to.
+
+**What TenneT's pages actually confirm:**
+
+| Date | Change | Kind |
+|---|---|---|
+| 28 Oct 2025 [TNT-MU] | "Publishing balance delta data five times per minute (instead of once per minute)." Immediately followed by: "Option to **additionally delay** price information on the balance delta. **Currently, there are no concrete plans for this.**" | Cadence (delay explicitly *not* implemented) |
+| 25 Nov 2025 [TNT-12S] | "The information is published every 12 seconds instead of every minute." | Cadence |
+| **3 Feb 2026** [TNT-12S], confirmed [TNT-MU] Q1 | "Starting 3 February 2026, we will determine the **regulation state** based on the new 12 second balance delta… Only the input changes from every minute to every 12 seconds." | **Target definition** — see below |
+
+**The only primary statement on balance-delta timing** is [IPS61] fn.16: the
+balance delta table *"shows these quantities, **approximately halfway each
+minute**, together with the prices of the pricesetting bids."* That describes a
+sub-minute publication point, not a multi-minute delay. Note also that the
+2025-10-28 page lists an added delay as an **unexercised option** — which is
+hard to reconcile with a 5-minute delay having been in force since Dec 2024.
+
+**Resolution: measure it, do not read it.** The lag is now `null` in
+`config/market_rules.yaml` with `lag_confidence: unresolved`, and
+`data_availability.available_at()` must **refuse to serve** `balance_delta`
+rather than fall back to a default. Phase 1 derives the lag empirically by
+comparing each observation's publication timestamp to the instant it describes,
+and writes the measured value back with evidence. A test fails if anyone fills
+in a number without upgrading the confidence tag
+(`test_balance_delta_lag_stays_unresolved_until_it_is_measured`).
+
+This is strictly better than the withdrawn table: an empirically measured lag is
+primary evidence about the actual data, whereas even a correct documented figure
+would still need verifying against what the API returns.
+
+#### 🔴 3 February 2026 — the regulation state changed meaning
+
+This is the most consequential thing found in this review, and it is not a
+pricing change.
+
+The state rule ([IPS61] §4.3) asks whether the intra-ISP balance-delta series
+*"continuously increases"*, *"continuously decreases"*, or *"both increases and
+decreases"* (→ state 2, the only dual-priced state). From 3 February 2026 the
+input to that test is the **12-second** series rather than the **1-minute**
+series: **75 samples per ISP instead of 15.**
+
+The wording is unchanged. The *effect* is not. Exact monotonicity over 75 noisy
+samples is strictly less likely than over 15, so **the frequency of state 2
+should rise on 2026-02-03 with no change whatsoever in the physical system.**
+
+Consequences:
+
+1. **T1 class priors break at 2026-02-03.** A classifier trained across it is
+   trained on two different labelling procedures.
+2. **Dual pricing becomes more common**, which *raises* the payoff to a
+   well-calibrated `P(state = 2)` in the dispatch policy — the risk-aware policy
+   should beat the deterministic one by more after this date than before.
+3. **Only ~6 months of post-change data exist** (2026-02-03 → today). Not enough
+   for a walk-forward on post-change data alone.
+
+This is a **falsifiable prediction**: the empirical frequency of state 2 should
+jump at 2026-02-03. Testing it in Phase 1 doubles as a check that the pipeline
+is reading the state correctly. If the jump is absent, my reasoning above is
+wrong and I want to know early.
 
 ### Q8 — Which series are revised — **PARTIALLY UNRESOLVED** ⚠
 
@@ -433,25 +500,32 @@ labelled operational-only, with GW and GWh stated separately.
 
 Ordered by how much damage a wrong answer does.
 
-1. **PICASSO (Q5).** Does a TenneT pricing methodology **newer than v6.0
-   (March 2022)** exist, and did NL imbalance price formation change on
-   2024-10-18? If it changed, the usable training history starts there — roughly
-   **22 months of data, not the 3-year minimum the brief asks for in §3.** This
-   is the biggest single open risk in the project and it decides the sample.
-2. **Balance-delta lag history (Q7).** The 2/3/5-minute timeline is entirely
-   secondary and `tennet.eu` blocks automated fetching. Can you retrieve the
-   release notes manually? Everything about backtest realism rests on it.
-3. **Decision timestamp (Q9).** Do you accept ISP-start, or do you want the
-   intra-ISP re-decision policy in scope? This changes the Phase 3 formulation.
-4. **T3 across the MTU change (Q10).** Segment-and-broadcast (my recommendation)
-   or restrict to post-2025-10-01?
-5. **Revision vintages (Q8).** Accept the limitation and quantify the bias, or
-   restrict features to non-revised series only? The latter is cleaner and
-   costs real predictive power.
-6. **Final holdout.** Per §11 this is your call and I have not touched it. Note
-   that the natural choice — the most recent contiguous period — is also the
-   only period free of the 2024–25 rule churn. That is an argument for it, and a
-   reason it will not resemble the walk-forward period.
+**Resolved in review (2026-08-04):**
+
+- ~~PICASSO (Q5)~~ — **closed.** v6.1 confirms price formation unchanged.
+- ~~Decision timestamp (Q9)~~ — **ISP start**, confirmed. Intra-ISP re-decision
+  is out of scope and documented in `LIMITATIONS.md`.
+- ~~T3 across the MTU change (Q10)~~ — **broadcast-and-segment**, confirmed.
+- ~~Balance-delta delay timeline (Q7)~~ — claim **withdrawn**; superseded by
+  "measure it in Phase 1" (below).
+
+**Still open:**
+
+1. **Final holdout.** Per §11 this is your call and I have not touched it.
+   The 2026-02-03 state-definition change complicates the obvious choice: the
+   most recent contiguous period is now the *only* period on the new
+   state-labelling regime, which makes it both the most relevant holdout and the
+   least comparable to the walk-forward period. My recommendation is to hold out
+   the most recent ~3 months anyway and report the incomparability explicitly —
+   but flag this as a decision I want you to make.
+2. **Revision vintages (Q8).** Accept the limitation and quantify the bias, or
+   restrict features to non-revised series only? The latter is cleaner and costs
+   real predictive power. Deferrable to Phase 1 once the data is in hand.
+3. **Price limits (Q6).** Still secondary. Low impact — realised prices sit
+   orders of magnitude inside these bounds — so it only affects outlier policy.
+4. **Balance-delta lag.** Not a question for you any more: Phase 1 measures it.
+   But if you ever find a TenneT netcode amendment or GEN/consultation document
+   that states a delay in minutes, it would let us cross-check the measurement.
 
 ## What I did not do
 

@@ -24,10 +24,10 @@ code in this repo.
 ## What exists today
 
 - **Settlement rules encoded and tested.** The regulation-state → price table
-  from TenneT's *Imbalance Pricing System* v6.0, including dual pricing in state
-  2 and the reverse-pricing mid-price correction, lives in
+  from TenneT's *Imbalance Pricing System* **v6.1 (21 Oct 2024)**, including dual
+  pricing in state 2 and the reverse-pricing mid-price correction, lives in
   [`config/market_rules.yaml`](config/market_rules.yaml) as executable config.
-  [`src/market.py`](src/market.py) resolves it; 21 tests in
+  [`src/market.py`](src/market.py) resolves it; 23 tests in
   [`tests/test_settlement.py`](tests/test_settlement.py) check it against
   hand-worked examples and a sign-convention property test.
 - **Publication lags catalogued** per series, including the one that is *not
@@ -38,12 +38,17 @@ code in this repo.
 Read [`LIMITATIONS.md`](LIMITATIONS.md) before anything else. The two that
 currently matter most:
 
-1. TenneT's pricing methodology document predates the Netherlands joining
-   PICASSO (18 Oct 2024) and no newer version was found. If price formation
-   changed then, usable history is ~22 months, not 3+ years.
-2. TenneT changed the balance-delta publication delay at least three times in
-   2024–25 — deliberately, to alter passive-balancing profitability. A backtest
-   using one constant lag measures a strategy that never existed.
+1. **The regulation state changed meaning on 2026-02-03** — determined from the
+   12-second balance delta instead of the 1-minute series (75 samples per ISP,
+   not 15). Same rule wording, but monotonicity is less likely over more
+   samples, so state 2 (the only dual-priced state) should get more frequent
+   with no change in the physical system. Only ~6 months of post-change data.
+2. **The balance-delta publication lag is unknown.** The widely-cited
+   3 → 5 → 2 minute timeline could not be substantiated — TenneT's own pages
+   document *cadence* changes, not *delay* changes. It is `null` in config and
+   Phase 1 measures it from data; until then no feature may use balance delta.
+3. PICASSO (18 Oct 2024) left price formation unchanged — confirmed by v6.1 —
+   but shifted the price *distribution*, plausibly halving volatility.
 
 ## Reproduce
 

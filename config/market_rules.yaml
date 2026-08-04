@@ -4,9 +4,16 @@
 # and publication lags from this file. Do not duplicate these constants in code.
 #
 # Primary source unless noted otherwise:
-#   [IPS6] TenneT TSO B.V., "Imbalance Pricing System: how are the (directions
-#          of) payment determined?", version 6.0, 30 March 2022.
-#          https://tennet-drupal.s3.eu-central-1.amazonaws.com/default/2022-06/Imbalance_pricing_system_0.pdf
+#   [IPS61] TenneT TSO B.V., "Imbalance Pricing System: how are the (directions
+#           of) payment determined?", version 6.1, 21 October 2024.
+#           docs/refs/TenneT_Imbalance_Pricing_System_v6.1_2024-10-21.pdf
+#           Changelog entry for 6.1: "Clarification on PICASSO impact".
+#           Section/table references below were verified against v6.1 by diffing
+#           it against v6.0; §4.2, §4.3 and §5 Table 2 are substantively
+#           UNCHANGED between the two versions apart from the additions noted.
+#   [STCRT] Staatscourant 2024 nr. 29868, cited by [IPS61] fn.14 as the legal
+#           basis for the PICASSO price-determination clarification.
+#           https://zoek.officielebekendmakingen.nl/stcrt-2024-29868.html
 #
 # Confidence tags on every block:
 #   primary   — taken verbatim from a TSO/regulator/EU-law document
@@ -18,7 +25,7 @@ meta:
   tso: TenneT TSO B.V.
   timezone_internal: UTC
   timezone_presentation: Europe/Amsterdam
-  rules_version: "2022-03-30/IPS-6.0"
+  rules_version: "2024-10-21/IPS-6.1"
   last_reviewed: "2026-08-04"
 
 # ---------------------------------------------------------------------------
@@ -27,15 +34,15 @@ meta:
 isp:
   length_minutes: 15
   confidence: primary
-  # [IPS6] Table 1: "The ISP is fixed at 15 minutes."
+  # [IPS61] Table 1: "The ISP is fixed at 15 minutes."
   # NL has used a 15-minute settlement period since market opening; the EBGL
   # 15-min ISP harmonisation deadline did not change NL practice.
-  source: "[IPS6] §2 Table 1"
+  source: "[IPS61] §2 Table 1"
 
 # ---------------------------------------------------------------------------
 # Q2 — Regulation states
 # ---------------------------------------------------------------------------
-# [IPS6] §4.3: "The four regulation states 0, +1, -1 and 2 describe various
+# [IPS61] §4.3: "The four regulation states 0, +1, -1 and 2 describe various
 # activation situations of FRR by TenneT per ISP".
 regulation_states:
   0:
@@ -66,29 +73,45 @@ regulation_states:
       balance deltas within the ISP both increases and decreases. This is the
       only dual-priced state.
     confidence: primary
-  source: "[IPS6] §4.3"
+  source: "[IPS61] §4.3"
+
+  # [IPS61] §4.3, added in v6.1: "There is no direct impact of participation in
+  # IGCC or PICASSO on the regulation state." Participation changes the power
+  # imbalance itself (a Dutch shortage can be netted away, or flipped into a
+  # surplus), but the state-determination rule is untouched.
+  igcc_picasso_affects_state_rule: false
+
+  # WHICH SERIES the monotonicity test is applied to. This is NOT a cosmetic
+  # detail: the rule asks whether the balance-delta series "continuously
+  # increases", so the SAMPLING RATE of that series changes the answer.
+  # TenneT changed this input on 2026-02-03 (see structural_breaks).
+  state_determination_input:
+    until_2026_02_03: balance_delta_1_minute    # 15 samples per ISP
+    from_2026_02_03: balance_delta_12_second    # 75 samples per ISP
+    confidence: primary
+    source: "TenneT news, 'Balance delta now published every 12 seconds', 25 Nov 2025"
 
 # ---------------------------------------------------------------------------
 # Q3 — Price formation and dual pricing
 # ---------------------------------------------------------------------------
 # Component prices, all €/MWh, all determined per ISP:
 #   p_up   — highest-priced ACTIVATED aFRR upward bid in the ISP, or the upward
-#            mFRRda price if that is higher.               [IPS6] §4.2
+#            mFRRda price if that is higher.               [IPS61] §4.2
 #   p_down — lowest-priced ACTIVATED aFRR downward bid in the ISP, or the
-#            downward mFRRda price if that is lower. May be negative. [IPS6] §4.2
+#            downward mFRRda price if that is lower. May be negative. [IPS61] §4.2
 #   p_mid  — average of the LOWEST upward bid price and the HIGHEST downward bid
 #            price on the merit order (offered, not necessarily activated).
-#                                                          [IPS6] §2, §4.2
+#                                                          [IPS61] §2, §4.2
 #
 # Two settlement prices exist per ISP:
 #   price_long  — settles a BRP SURPLUS (injected more / withdrew less than schedule)
 #   price_short — settles a BRP SHORTAGE (injected less / withdrew more than schedule)
 #
-# Encoded from [IPS6] §5 Table 2.
+# Encoded from [IPS61] §5 Table 2.
 pricing:
   confidence: primary
-  source: "[IPS6] §4.2, §5 Table 2"
-  fallback_no_price: previous_isp   # [IPS6] §4.2 third bullet
+  source: "[IPS61] §4.2, §5 Table 2"
+  fallback_no_price: previous_isp   # [IPS61] §4.2 third bullet
   rules:
     0:
       price_long:  p_mid
@@ -106,7 +129,7 @@ pricing:
       price_long:  min(p_down, p_mid)
       price_short: max(p_up, p_mid)
 
-# Sign / cash-flow convention. [IPS6] §4.1 and §5 Table 2 direction-of-payment column.
+# Sign / cash-flow convention. [IPS61] §4.1 and §5 Table 2 direction-of-payment column.
 #   Volumes are signed as seen from the grid: BRP surplus is POSITIVE,
 #   BRP shortage is NEGATIVE.
 #   Net cash to the BRP, with e_surplus and e_shortage as POSITIVE MWh magnitudes:
@@ -117,7 +140,7 @@ pricing:
 #   negative-price rows where the direction of payment flips.
 settlement:
   confidence: primary
-  source: "[IPS6] §4.1, §5 Table 2, §6.1"
+  source: "[IPS61] §4.1, §5 Table 2, §6.1"
   cash_to_brp_formula: "price_long * e_surplus - price_short * e_shortage"
   surplus_sign: positive
   shortage_sign: negative
@@ -132,12 +155,12 @@ incentive_component:
   active: false
   value_eur_per_mwh: 0.0
   confidence: primary
-  # [IPS6] revision history: version 5.0, 31/07/2020 — "Abolishment of incentive
+  # [IPS61] revision history: version 5.0, 31/07/2020 — "Abolishment of incentive
   # component". No incentive/prikkel term appears anywhere in v6.0's price
   # determination (§4.2, §5). It therefore does NOT enter the settlement price
   # for any period from 2020-07-31 onward.
   abolished_on: "2020-07-31"
-  source: "[IPS6] revision history (v5.0) + absence from §4.2/§5"
+  source: "[IPS61] revision history (v5.0) + absence from §4.2/§5"
 
 # ---------------------------------------------------------------------------
 # Q6 — Price limits
@@ -166,16 +189,42 @@ price_limits:
 # from first publication — R1 requires the FIRST-PUBLISHED vintage.
 publication:
   balance_delta:
-    cadence_seconds: 12
-    lag_seconds: 120
+    # CADENCE and DELAY are different things and must not be conflated.
+    #   cadence = how often a new value is published
+    #   lag     = how long after the instant it describes it becomes visible
+    # TenneT's published changes in 2025-26 are all CADENCE changes. TenneT's
+    # own methodology document describes no multi-minute delay at all.
+    cadence_seconds: 12          # from 2025-11-25; 60 before that
+    cadence_confidence: primary
+    cadence_source: "TenneT news, 'Balance delta now published every 12 seconds', 25 Nov 2025"
+
+    lag_seconds: null            # DELIBERATELY UNSET — see below
+    lag_confidence: unresolved
+    lag_source: >
+      [IPS61] fn.16 is the only primary statement on balance-delta timing: the
+      table "shows these quantities, approximately halfway each minute, together
+      with the prices of the pricesetting bids." That describes a ~30s
+      within-minute publication point, NOT a multi-minute delay.
+
+      Trade press reports a 3 -> 5 -> 2 minute publication-DELAY timeline across
+      2024-25. No TenneT page reviewed supports it, and TenneT's "Market update
+      at a glance" of 2025-10-28 lists delaying balance-delta price information
+      as an OPTION with "no concrete plans". The reports may be conflating
+      cadence with delay. Treat the delay timeline as UNSUBSTANTIATED.
+
+      RESOLUTION PATH (Phase 1): do not encode a number from documentation.
+      MEASURE the lag empirically by comparing each observation's own
+      publication timestamp against the instant it describes, then write the
+      measured, possibly time-varying, lag back into this file with evidence.
+      Until that is done, data_availability.available_at() MUST refuse to serve
+      this field rather than default to a guess.
     revised: false
-    confidence: secondary   # TODO: confirm against TenneT's own release note
-    time_varying: true      # see structural_breaks below — the lag CHANGED
+    time_varying: unknown
     note: >
       Near-real-time operational signal: power of activated upward bids minus
       activated downward bids. Published intra-ISP, so it is the main legitimate
-      within-ISP feature. Its lag is NOT constant over history.
-    source: "[IPS6] footnote 15; TenneT release notes (see DOMAIN_NOTES Q7)"
+      within-ISP feature — which is exactly why its lag must be measured, not
+      assumed. An over-generous lag is a direct R1 look-ahead violation.
 
   imbalance_price_settled:
     cadence_seconds: 900
@@ -184,9 +233,9 @@ publication:
     confidence: primary
     note: >
       The settlement-grade price. This is the TARGET variable, never a feature.
-      [IPS6] §3.2: "After the delivery day (D+1), the process of financial
+      [IPS61] §3.2: "After the delivery day (D+1), the process of financial
       settlement starts at 10.00 a.m."
-    source: "[IPS6] §3.2"
+    source: "[IPS61] §3.2"
 
   imbalance_price_realtime_estimate:
     cadence_seconds: 60
@@ -288,22 +337,60 @@ structural_breaks:
     impact: "Settlement price definition changed. Data before this date is a different target."
   - date: "2024-10-18"
     what: picasso_go_live_nl
-    confidence: secondary
+    confidence: primary
+    rules_changed: false
     impact: >
-      TenneT joined the European aFRR platform PICASSO. Reported to have roughly
-      halved imbalance price volatility. TenneT reportedly continues to set the
-      imbalance price from the domestic marginal activated bid rather than the
-      PICASSO cross-border marginal price, so [IPS6] §4.2 is believed to still
-      hold — but this is the single most important thing to verify before
-      trusting any pre-2024-10-18 training data.
-  - date: "2024-12"
-    what: balance_delta_lag_increased_to_5min
-    confidence: secondary
-    impact: "Reduces the intra-ISP information set. Features must respect the lag in force AT THE TIME."
-  - date: "2025-07-01"
-    what: balance_delta_lag_reduced_to_2min
-    confidence: secondary
-    impact: "Expands the intra-ISP information set."
+      TenneT joined the European aFRR platform PICASSO. RESOLVED by [IPS61]
+      §4.2, added in v6.1 three days after go-live: "The CBMP determined by the
+      PICASSO platform is not explicitly taken into account in the price
+      determination." §4.3 adds: "There is no direct impact of participation in
+      IGCC or PICASSO on the regulation state."
+
+      So the PRICE FORMATION RULES are unchanged and this rule table is valid
+      across the whole sample. The DISTRIBUTION still shifted: PICASSO relocates
+      the residual power imbalance to the area with the most economical bids,
+      which mechanically truncates the domestic merit order's extremes.
+      Secondary sources report imbalance price volatility roughly halved.
+      Segment evaluation on this date; do not drop pre-2024-10-18 data.
+
+  # The 3 -> 5 -> 2 minute balance-delta publication-DELAY entries that used to
+  # sit here have been REMOVED. Manual review of TenneT's own pages found only
+  # CADENCE changes, and found delay described as an unexercised option. See
+  # publication.balance_delta.lag_source and docs/DECISIONS.md ADR-006.
+
+  - date: "2025-11-25"
+    what: balance_delta_cadence_1min_to_12s
+    confidence: primary
+    impact: >
+      Publication cadence only: 1/min -> 5/min -> every 12s. Does not by itself
+      change the information LAG. It does mean a higher-resolution intra-ISP
+      feature is available from this date, so any 12s-resolution feature is
+      undefined before it.
+    source: "TenneT news, 'Balance delta now published every 12 seconds', 25 Nov 2025"
+
+  - date: "2026-02-03"
+    what: regulation_state_input_switched_to_12s_balance_delta
+    confidence: primary
+    rules_changed: false
+    impact: >
+      TARGET-VARIABLE REGIME CHANGE. TenneT: "Starting 3 February 2026, we will
+      determine the regulation state based on the new 12 second balance delta...
+      Only the input changes from every minute to every 12 seconds."
+
+      The state rule is unchanged in WORDING but not in EFFECT. State 2 requires
+      the intra-ISP balance-delta series to both increase and decrease; states
+      +1/-1 require monotonicity. Sampling the same underlying signal 75 times
+      per ISP instead of 15 makes exact monotonicity strictly less likely, so
+      the expected frequency of state 2 — the ONLY dual-priced state — should
+      RISE at this date, with no change in the physical system.
+
+      Consequences: (a) T1 class priors break at 2026-02-03; (b) dual pricing
+      becomes more common, which raises the value of a calibrated P(state=2) in
+      the dispatch policy; (c) only ~6 months of post-change data exist as of
+      2026-08-04. Test the jump empirically in Phase 1 — it is a falsifiable
+      prediction and a good check that the data pipeline is sane.
+    source: "TenneT news, 'Balance delta now published every 12 seconds', 25 Nov 2025"
+
   - date: "2025-10-01"
     what: sdac_15min_mtu_go_live
     confidence: primary
@@ -311,7 +398,5 @@ structural_breaks:
       Day-ahead market moved from 60-min to 15-min MTU across SDAC. Day-ahead
       price features change resolution mid-sample; the DA-vs-imbalance spread
       (target T3) is not comparable across this boundary without care.
-  - date: "2025-11"
-    what: balance_delta_published_every_12s
-    confidence: secondary
-    impact: "Higher-resolution intra-ISP signal available only from this date onward."
+  # (The former "2025-11 balance_delta_published_every_12s" entry is superseded
+  # by the dated, primary-sourced 2025-11-25 entry above.)

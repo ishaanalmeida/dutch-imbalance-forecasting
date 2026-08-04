@@ -9,21 +9,39 @@ revenue and accuracy claim below is therefore `TODO: not yet measured` (R3).
 
 ## Established in Phase 0
 
-### The methodology document predates a major market change
-TenneT's *Imbalance Pricing System* v6.0 is dated **30 March 2022**. The
-Netherlands joined the European aFRR platform **PICASSO on 18 October 2024**. No
-newer methodology version was located. Secondary sources indicate TenneT kept
-setting the imbalance price from the domestic marginal activated bid rather than
-PICASSO's cross-border marginal price — **unverified**. If that is wrong, price
-formation differs before and after 2024-10-18 and the usable training history is
-~22 months, short of the 3-year minimum in the brief. See `docs/DOMAIN_NOTES.md` Q5.
+### PICASSO shifted the price distribution, even though the rules held
+Resolved in review: TenneT's *Imbalance Pricing System* **v6.1 (21 Oct 2024)**
+confirms the CBMP is "not explicitly taken into account in the price
+determination" and that IGCC/PICASSO have "no direct impact on the regulation
+state". Price formation is therefore consistent across the sample.
 
-### The intra-ISP information window changed repeatedly, and the dates are unverified
-TenneT changed the balance-delta publication delay at least three times between
-late 2024 and late 2025 (≈3 → 5 → 2 minutes), *explicitly to change how
-profitable passive balancing is*. The timeline is secondary-sourced only;
-`tennet.eu` blocked automated retrieval. A backtest that applies one constant lag
-across history is measuring a strategy that never existed.
+The *distribution* is not. v6.1 §3.4 states PICASSO relocates residual power
+imbalance "to the area with the most economical bids", which walks the domestic
+merit order less far and truncates price extremes; secondary sources report
+volatility roughly halved. Results spanning 2024-10-18 must be segmented, and a
+model fitted mostly on pre-PICASSO data will be miscalibrated on the tails that
+matter most for battery revenue.
+
+### The balance-delta publication lag is unknown and will be measured, not cited
+The widely-repeated 3 → 5 → 2 minute *delay* timeline could not be substantiated
+against TenneT's own pages, which document only **cadence** changes (1/min →
+5/min → every 12 s) and describe an added delay as an option with "no concrete
+plans" as of 2025-10-28. The two were likely conflated in trade press.
+
+The lag is therefore `null` in config and Phase 1 measures it from the data.
+Until then no feature may be built from balance delta. If the measurement proves
+noisy or time-varying in a way we cannot pin down, every revenue figure inherits
+that uncertainty and it must be reported as a sensitivity, not hidden in a
+point estimate.
+
+### The regulation state changed meaning on 2026-02-03
+From 3 February 2026 TenneT determines the regulation state from the 12-second
+balance delta rather than the 1-minute series — 75 samples per ISP instead of
+15. The rule wording is unchanged, but exact monotonicity is less likely over
+more samples, so **state 2 (the only dual-priced state) should become more
+frequent with no change in the physical system.** T1 class priors break at this
+date and only ~6 months of post-change data exist. This is a target-variable
+regime change that is invisible in the price series.
 
 ### Data revision vintages cannot be fully reconstructed
 ENTSO-E's API serves the current vintage, not the historically-published one.

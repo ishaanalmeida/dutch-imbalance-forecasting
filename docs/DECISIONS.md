@@ -102,35 +102,94 @@ wrong" is the worst possible failure mode.
 and would drift from the code within weeks — the exact failure §2 legislates
 against.
 
-**Rigour-zone note.** `tests/test_settlement.py` (21 tests) is longer than the
+**Rigour-zone note.** `tests/test_settlement.py` (23 tests) is longer than the
 40 lines of logic it covers. Ponytail's ladder would flag that. Declined: the
 invariant it protects is that every euro in this project is settled with the
 correct sign, and the property test (`price_short >= price_long` across all
 states and price combinations) catches an inverted rule table that
-example-based tests would miss. Expected values are hand-worked from [IPS6]
+example-based tests would miss. Expected values are hand-worked from [IPS61]
 Table 2, not recorded from the implementation's output.
 
-## ADR-005 — Decision timestamp set at ISP start (provisional)
+## ADR-005 — Decision timestamp set at ISP start (confirmed)
 
 Backtest information cutoff for target ISP `t` is
 `start(t) − lag(field, t)`. See `docs/DOMAIN_NOTES.md` Q9 for the argument and
-what it excludes (intra-ISP re-decision). **Provisional — awaiting review.**
-This is a §11 "ask before" item: it materially changes results.
+what it excludes (intra-ISP re-decision).
 
-## ADR-006 — Publication lag is a function of time, not a constant
+**CONFIRMED 2026-08-04.** Intra-ISP re-decision is out of scope and recorded in
+`LIMITATIONS.md`. Same review confirmed ADR-008 below.
 
-**Context.** TenneT changed the balance-delta publication delay at least three
-times between late 2024 and late 2025 (3 → 5 → 2 minutes), explicitly to alter
-how aggressively market parties passively balance.
+## ADR-006 — Balance-delta publication lag is measured in Phase 1, not read from docs
 
-**Decision.** `publication.balance_delta.time_varying: true` in the config, and
-`data_availability.available_at(field, target_period)` must resolve the lag *in
-force at `target_period`*, not today's.
+**Superseded the original ADR-006** ("publication lag is a function of time"),
+which was built on a claim that did not survive review.
 
-**Why.** A constant 2-minute lag applied to 2024 data hands the strategy
-information that did not exist then — and inflates revenue precisely in the
-periods TenneT's intervention was designed to make less profitable. This is a
-look-ahead violation (R1) that would not look like one in code review.
+**Context.** The original version asserted a 3 → 5 → 2 minute balance-delta
+publication *delay* timeline from trade press. Manual review of TenneT's own
+pages (2025-10-28, 2025-11-25, 2026-02-20) found **only cadence changes**
+(1/min → 5/min → every 12 s) and found an added delay described as an option
+with *"no concrete plans"* as of 2025-10-28. The only primary statement on
+balance-delta timing, [IPS61] fn.16, describes publication *"approximately
+halfway each minute"* — a sub-minute point, not a multi-minute lag.
 
-**Caveat.** The dates are SECONDARY-sourced and unverified; `tennet.eu` blocks
-automated fetching. Flagged in DOMAIN_NOTES Q7 as a blocking item.
+**Cadence and delay are different mechanisms.** Cadence is how often a value is
+published; delay is how long after the instant it describes it becomes visible.
+A frequency increase is not a lag reduction, and the secondary sources appear to
+conflate them.
+
+**Decision.** `publication.balance_delta.lag_seconds` is `null` with
+`lag_confidence: unresolved`. `data_availability.available_at()` must **refuse
+to serve this field** rather than default to a guess. Phase 1 measures the lag
+empirically — comparing each observation's publication timestamp to the instant
+it describes — and writes the measured value back with evidence.
+`test_balance_delta_lag_stays_unresolved_until_it_is_measured` fails if anyone
+sets a number without upgrading the confidence tag to `measured` or `primary`.
+
+**Why this is better than the withdrawn version.** An over-generous lag is a
+silent R1 look-ahead violation that inflates every revenue figure and looks
+correct in code review. A measured lag is primary evidence about the actual
+data; even a correct documented figure would still need checking against what
+the API returns.
+
+**What survives from the original ADR.** The *principle* that the lag may be
+time-varying, and that `available_at` must therefore take the target timestamp
+rather than return a constant. `time_varying: unknown` until measured.
+
+## ADR-007 — 2026-02-03 is a target-variable regime change, not a data change
+
+**Context.** From 3 February 2026 TenneT determines the regulation state from
+the 12-second balance delta instead of the 1-minute series — 75 samples per ISP
+instead of 15. The rule wording in [IPS61] §4.3 is unchanged.
+
+**Finding.** The rule asks whether the intra-ISP series is monotonic (→ ±1) or
+both rises and falls (→ 2, the only dual-priced state). Exact monotonicity over
+75 noisy samples is strictly less likely than over 15, so **the frequency of
+state 2 should rise at this date with no change in the physical system.**
+
+**Decision.** Registered as a structural break with `rules_changed: false`, and
+`regulation_states.state_determination_input` records both regimes. T1 results
+must be segmented at 2026-02-03, and the Phase 1 data-quality report must test
+the predicted jump in state-2 frequency.
+
+**Why it is logged as a decision and not just a note.** It is the kind of change
+that is invisible in the price data — nothing about price *formation* changed —
+so a model trained across the boundary would silently learn two different
+labelling procedures. It also *raises* the value of the risk-aware dispatch
+policy after that date, which is a prediction the Phase 3 comparison can test.
+
+**Falsifiable.** If the empirical state-2 frequency does not jump at 2026-02-03,
+this reasoning is wrong. Check it early.
+
+## ADR-008 — T3 spans the 2025-10-01 MTU change via broadcast-and-segment
+
+**CONFIRMED 2026-08-04.** Day-ahead prices before 2025-10-01 are hourly; they
+are broadcast across the four ISPs of each hour so that T3 (spread vs day-ahead)
+is defined over the full history. Every T3 result is segmented at 2025-10-01.
+
+**Why not restrict to post-2025-10-01.** That leaves under a year of data —
+too thin for walk-forward plus an untouched holdout (R2).
+
+**The cost, stated.** Pre-alignment, one day-ahead price covers four ISPs, so
+broadcast T3 carries a step-function artefact that is a property of the MTU
+mismatch and not of the market. Segmentation is what keeps that honest; the
+segmented tables are the reported result, the pooled number is not.

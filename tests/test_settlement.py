@@ -151,3 +151,35 @@ def test_incentive_component_is_abolished() -> None:
     incentive = load_rules()["incentive_component"]
     assert incentive["active"] is False
     assert incentive["value_eur_per_mwh"] == 0.0
+
+
+def test_balance_delta_lag_stays_unresolved_until_it_is_measured() -> None:
+    """R1 guard. The balance-delta publication lag is NOT documented anywhere in
+    TenneT's primary material; the widely-repeated 3/5/2-minute timeline could
+    not be substantiated and may be a cadence/delay conflation.
+
+    An over-generous lag here is a silent look-ahead violation that would inflate
+    every backtest revenue figure. So the value stays null and this test fails
+    the moment someone fills it in without also recording how it was measured.
+    """
+    field = load_rules()["publication"]["balance_delta"]
+    if field["lag_seconds"] is None:
+        assert field["lag_confidence"] == "unresolved"
+        return
+    # Someone has supplied a lag: it must be measured, not asserted.
+    assert field["lag_confidence"] in {"measured", "primary"}, (
+        "balance_delta.lag_seconds was set without upgrading lag_confidence to "
+        "'measured' (empirically derived) or 'primary' (a TenneT document)."
+    )
+
+
+def test_regulation_state_input_change_is_recorded() -> None:
+    """The 2026-02-03 switch to a 12s state-determination input changes the
+    expected frequency of state 2 without changing the rule wording. It must
+    stay registered as a structural break or T1 will be trained across a target
+    regime change that is invisible in the price data."""
+    breaks = {b["what"] for b in load_rules()["structural_breaks"]}
+    assert "regulation_state_input_switched_to_12s_balance_delta" in breaks
+
+    inputs = load_rules()["regulation_states"]["state_determination_input"]
+    assert inputs["until_2026_02_03"] != inputs["from_2026_02_03"]
