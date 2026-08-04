@@ -1,0 +1,17 @@
+# R7: raw third-party market data is never committed.
+data/
+!data/raw/.gitkeep
+!data/interim/.gitkeep
+!data/processed/.gitkeep
+
+# R8: secrets
+.env
+
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+mlruns/
+*.parquet

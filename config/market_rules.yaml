@@ -1,0 +1,317 @@
+# Dutch (TenneT) imbalance settlement rules — single source of truth.
+#
+# RIGOUR ZONE (CLAUDE.md §12). Every downstream module reads settlement logic
+# and publication lags from this file. Do not duplicate these constants in code.
+#
+# Primary source unless noted otherwise:
+#   [IPS6] TenneT TSO B.V., "Imbalance Pricing System: how are the (directions
+#          of) payment determined?", version 6.0, 30 March 2022.
+#          https://tennet-drupal.s3.eu-central-1.amazonaws.com/default/2022-06/Imbalance_pricing_system_0.pdf
+#
+# Confidence tags on every block:
+#   primary   — taken verbatim from a TSO/regulator/EU-law document
+#   secondary — trade press or vendor blog; MUST be upgraded before it is relied on
+#   assumed   — our modelling choice, not a fact about the market
+
+meta:
+  market: NL
+  tso: TenneT TSO B.V.
+  timezone_internal: UTC
+  timezone_presentation: Europe/Amsterdam
+  rules_version: "2022-03-30/IPS-6.0"
+  last_reviewed: "2026-08-04"
+
+# ---------------------------------------------------------------------------
+# Q1 — Imbalance Settlement Period
+# ---------------------------------------------------------------------------
+isp:
+  length_minutes: 15
+  confidence: primary
+  # [IPS6] Table 1: "The ISP is fixed at 15 minutes."
+  # NL has used a 15-minute settlement period since market opening; the EBGL
+  # 15-min ISP harmonisation deadline did not change NL practice.
+  source: "[IPS6] §2 Table 1"
+
+# ---------------------------------------------------------------------------
+# Q2 — Regulation states
+# ---------------------------------------------------------------------------
+# [IPS6] §4.3: "The four regulation states 0, +1, -1 and 2 describe various
+# activation situations of FRR by TenneT per ISP".
+regulation_states:
+  0:
+    name: no_regulation
+    description: >
+      TenneT does not regulate upward or downward during the ISP. Also applies
+      when Load Frequency Control is inactive, and when BRP deviations net out
+      via cross-border imbalance netting (IGCC) without an aFRR activation.
+    confidence: primary
+  1:
+    name: upward_only
+    description: >
+      TenneT only regulates upward during the ISP. Also applies when both
+      directions are activated but the intra-ISP series of balance deltas is
+      continuously non-decreasing.
+    confidence: primary
+  -1:
+    name: downward_only
+    description: >
+      TenneT only regulates downward during the ISP. Also applies when both
+      directions are activated but the intra-ISP series of balance deltas is
+      continuously non-increasing.
+    confidence: primary
+  2:
+    name: both_directions
+    description: >
+      Both upward and downward regulation occur within the ISP AND the series of
+      balance deltas within the ISP both increases and decreases. This is the
+      only dual-priced state.
+    confidence: primary
+  source: "[IPS6] §4.3"
+
+# ---------------------------------------------------------------------------
+# Q3 — Price formation and dual pricing
+# ---------------------------------------------------------------------------
+# Component prices, all €/MWh, all determined per ISP:
+#   p_up   — highest-priced ACTIVATED aFRR upward bid in the ISP, or the upward
+#            mFRRda price if that is higher.               [IPS6] §4.2
+#   p_down — lowest-priced ACTIVATED aFRR downward bid in the ISP, or the
+#            downward mFRRda price if that is lower. May be negative. [IPS6] §4.2
+#   p_mid  — average of the LOWEST upward bid price and the HIGHEST downward bid
+#            price on the merit order (offered, not necessarily activated).
+#                                                          [IPS6] §2, §4.2
+#
+# Two settlement prices exist per ISP:
+#   price_long  — settles a BRP SURPLUS (injected more / withdrew less than schedule)
+#   price_short — settles a BRP SHORTAGE (injected less / withdrew more than schedule)
+#
+# Encoded from [IPS6] §5 Table 2.
+pricing:
+  confidence: primary
+  source: "[IPS6] §4.2, §5 Table 2"
+  fallback_no_price: previous_isp   # [IPS6] §4.2 third bullet
+  rules:
+    0:
+      price_long:  p_mid
+      price_short: p_mid
+    1:
+      price_long:  p_up
+      price_short: p_up
+    -1:
+      price_long:  p_down
+      price_short: p_down
+    2:
+      # Dual pricing WITH the reverse-pricing correction to the mid-price.
+      # Table 2, state 2, BRP shortage: p_up if p_up >= p_mid else p_mid
+      # Table 2, state 2, BRP surplus:  p_down if p_down <= p_mid else p_mid
+      price_long:  min(p_down, p_mid)
+      price_short: max(p_up, p_mid)
+
+# Sign / cash-flow convention. [IPS6] §4.1 and §5 Table 2 direction-of-payment column.
+#   Volumes are signed as seen from the grid: BRP surplus is POSITIVE,
+#   BRP shortage is NEGATIVE.
+#   Net cash to the BRP, with e_surplus and e_shortage as POSITIVE MWh magnitudes:
+#
+#     cash_to_brp = price_long * e_surplus  -  price_short * e_shortage
+#
+#   This single expression reproduces every row of Table 2, including the
+#   negative-price rows where the direction of payment flips.
+settlement:
+  confidence: primary
+  source: "[IPS6] §4.1, §5 Table 2, §6.1"
+  cash_to_brp_formula: "price_long * e_surplus - price_short * e_shortage"
+  surplus_sign: positive
+  shortage_sign: negative
+  # For a battery operating purely on imbalance:
+  #   discharging above schedule  -> BRP surplus  -> receives price_long  per MWh
+  #   charging  above schedule    -> BRP shortage -> pays     price_short per MWh
+
+# ---------------------------------------------------------------------------
+# Q4 — Incentive component
+# ---------------------------------------------------------------------------
+incentive_component:
+  active: false
+  value_eur_per_mwh: 0.0
+  confidence: primary
+  # [IPS6] revision history: version 5.0, 31/07/2020 — "Abolishment of incentive
+  # component". No incentive/prikkel term appears anywhere in v6.0's price
+  # determination (§4.2, §5). It therefore does NOT enter the settlement price
+  # for any period from 2020-07-31 onward.
+  abolished_on: "2020-07-31"
+  source: "[IPS6] revision history (v5.0) + absence from §4.2/§5"
+
+# ---------------------------------------------------------------------------
+# Q6 — Price limits
+# ---------------------------------------------------------------------------
+price_limits:
+  confidence: secondary   # TODO: verify against the ACER decision text itself
+  note: >
+    Balancing-energy bid price limits under the EBGL harmonised pricing
+    methodology, not caps on the imbalance price as such. Transitional limits of
+    +/-15000 EUR/MWh applied until July 2026, after which technical limits of
+    +/-99999 EUR/MWh apply. A TSO proposal to lower the transitional limit to
+    +/-10000 EUR/MWh was reported. Because the NL imbalance price is set by the
+    marginal activated bid, these limits bound the imbalance price indirectly.
+  transitional_max_eur_per_mwh: 15000
+  transitional_min_eur_per_mwh: -15000
+  transitional_until: "2026-07"
+  technical_max_eur_per_mwh: 99999
+  technical_min_eur_per_mwh: -99999
+  source: "ACER decisions on the balancing pricing methodology (see docs/DOMAIN_NOTES.md Q6)"
+
+# ---------------------------------------------------------------------------
+# Q7/Q8 — Publication cadence and lag. Consumed by src/data/data_availability.py.
+# ---------------------------------------------------------------------------
+# lag_seconds is measured from the END of the period the datum describes to the
+# moment it is first retrievable. `revised: true` means later vintages differ
+# from first publication — R1 requires the FIRST-PUBLISHED vintage.
+publication:
+  balance_delta:
+    cadence_seconds: 12
+    lag_seconds: 120
+    revised: false
+    confidence: secondary   # TODO: confirm against TenneT's own release note
+    time_varying: true      # see structural_breaks below — the lag CHANGED
+    note: >
+      Near-real-time operational signal: power of activated upward bids minus
+      activated downward bids. Published intra-ISP, so it is the main legitimate
+      within-ISP feature. Its lag is NOT constant over history.
+    source: "[IPS6] footnote 15; TenneT release notes (see DOMAIN_NOTES Q7)"
+
+  imbalance_price_settled:
+    cadence_seconds: 900
+    lag_seconds: 122400     # D+1 10:00 CET, worst case ~34h after ISP end
+    revised: false
+    confidence: primary
+    note: >
+      The settlement-grade price. This is the TARGET variable, never a feature.
+      [IPS6] §3.2: "After the delivery day (D+1), the process of financial
+      settlement starts at 10.00 a.m."
+    source: "[IPS6] §3.2"
+
+  imbalance_price_realtime_estimate:
+    cadence_seconds: 60
+    lag_seconds: 120
+    revised: true           # estimate is superseded by the settled value
+    confidence: secondary
+    note: >
+      TenneT's intra-ISP estimated price. Usable as a feature; must never be used
+      as the target, and its revision to the settled value must be respected.
+
+  regulation_state:
+    cadence_seconds: 900
+    lag_seconds: 122400
+    revised: false
+    confidence: primary
+    note: >
+      Definitive only once the full intra-ISP balance-delta trajectory is known,
+      i.e. at ISP end at the earliest. Treat as target, not feature. An intra-ISP
+      provisional state may be inferable from balance delta — if used, it must be
+      reconstructed from lagged balance delta only, never read from the published
+      settled value.
+
+  day_ahead_price:
+    cadence_seconds: 900    # 60-min MTU before 2025-10-01, 15-min from then
+    lag_seconds: -1         # published D-1 ~12:45 CET, i.e. BEFORE delivery
+    revised: false
+    confidence: primary
+    note: >
+      Reg. 543/2013 Art. 12(2)(d): published no later than one hour after gate
+      closure. SDAC gate closure is 12:00 CET on D-1, so day-ahead prices for the
+      whole of day D are available from ~13:00 CET on D-1. Negative lag_seconds
+      is a sentinel meaning "available before the delivery day begins"; the
+      availability module must resolve it to the actual D-1 publication instant.
+    source: "Reg. (EU) 543/2013 Art. 12(2)(d)"
+
+  load_forecast_day_ahead:
+    lag_seconds: -1
+    revised: true
+    confidence: primary
+    note: "Reg. 543/2013 Art. 6(2)(b): no later than two hours before day-ahead gate closure."
+    source: "Reg. (EU) 543/2013 Art. 6(2)(b)"
+
+  wind_solar_forecast_day_ahead:
+    lag_seconds: -1
+    revised: true
+    confidence: primary
+    note: >
+      Reg. 543/2013 Art. 14(2)(d): no later than 17:00 one day before delivery,
+      with at least one intraday update at 07:00 on the delivery day. The pair
+      (D-1 17:00 vintage, D 07:00 vintage) is the legitimate forecast-error proxy
+      required by CLAUDE.md §4 Features.
+    source: "Reg. (EU) 543/2013 Art. 14(2)(d)"
+
+  actual_generation:
+    lag_seconds: 3600
+    revised: true
+    confidence: primary
+    note: "Reg. 543/2013 Art. 16(2)(b): no later than one hour after the operational period."
+    source: "Reg. (EU) 543/2013 Art. 16(2)(b)"
+
+  cross_border_physical_flow:
+    lag_seconds: 3600
+    revised: true
+    confidence: primary
+    note: "Reg. 543/2013 Art. 12(2)(f): as close to real time as possible, no later than one hour after."
+    source: "Reg. (EU) 543/2013 Art. 12(2)(f)"
+
+  activated_balancing_volumes:
+    lag_seconds: 3600
+    revised: true
+    confidence: assumed     # TODO: Reg. 543/2013 balancing articles not yet read
+    note: "Deadline not yet verified against the regulation text. Do not use as a feature until it is."
+
+# ---------------------------------------------------------------------------
+# Q9 — Decision timestamp. THIS IS THE HARD INFORMATION CUTOFF IN THE BACKTEST.
+# ---------------------------------------------------------------------------
+decision:
+  confidence: assumed
+  offset_from_isp_start_seconds: 0
+  rationale: >
+    A battery acting on the imbalance signal for ISP t decides at or before the
+    start of t. Choosing t's start (offset 0) means the newest usable balance
+    delta observation is from t-1 minus the publication lag, which is the
+    conservative reading of R1. An intra-ISP policy that re-decides during t is a
+    strictly richer problem and is deliberately deferred; if it is added later,
+    the cutoff must move with it, in this file, not in model code.
+  # Effective information cutoff for target ISP t:
+  #   cutoff(t) = start(t) - publication[field].lag_seconds
+  # data_availability.available_at() must implement exactly this and the feature
+  # builder must refuse any feature whose availability postdates the cutoff.
+
+# ---------------------------------------------------------------------------
+# Structural breaks — regime changes that MUST be segmented in evaluation.
+# ---------------------------------------------------------------------------
+structural_breaks:
+  - date: "2020-07-31"
+    what: incentive_component_abolished
+    confidence: primary
+    impact: "Settlement price definition changed. Data before this date is a different target."
+  - date: "2024-10-18"
+    what: picasso_go_live_nl
+    confidence: secondary
+    impact: >
+      TenneT joined the European aFRR platform PICASSO. Reported to have roughly
+      halved imbalance price volatility. TenneT reportedly continues to set the
+      imbalance price from the domestic marginal activated bid rather than the
+      PICASSO cross-border marginal price, so [IPS6] §4.2 is believed to still
+      hold — but this is the single most important thing to verify before
+      trusting any pre-2024-10-18 training data.
+  - date: "2024-12"
+    what: balance_delta_lag_increased_to_5min
+    confidence: secondary
+    impact: "Reduces the intra-ISP information set. Features must respect the lag in force AT THE TIME."
+  - date: "2025-07-01"
+    what: balance_delta_lag_reduced_to_2min
+    confidence: secondary
+    impact: "Expands the intra-ISP information set."
+  - date: "2025-10-01"
+    what: sdac_15min_mtu_go_live
+    confidence: primary
+    impact: >
+      Day-ahead market moved from 60-min to 15-min MTU across SDAC. Day-ahead
+      price features change resolution mid-sample; the DA-vs-imbalance spread
+      (target T3) is not comparable across this boundary without care.
+  - date: "2025-11"
+    what: balance_delta_published_every_12s
+    confidence: secondary
+    impact: "Higher-resolution intra-ISP signal available only from this date onward."
