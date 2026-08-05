@@ -189,6 +189,7 @@ price_limits:
 # from first publication — R1 requires the FIRST-PUBLISHED vintage.
 publication:
   balance_delta:
+    rule: unresolved            # lag must be MEASURED (ADR-006), not assumed
     # CADENCE and DELAY are different things and must not be conflated.
     #   cadence = how often a new value is published
     #   lag     = how long after the instant it describes it becomes visible
@@ -227,6 +228,7 @@ publication:
       assumed. An over-generous lag is a direct R1 look-ahead violation.
 
   imbalance_price_settled:
+    rule: lag_after_period
     cadence_seconds: 900
     lag_seconds: 122400     # D+1 10:00 CET, worst case ~34h after ISP end
     revised: false
@@ -238,6 +240,7 @@ publication:
     source: "[IPS61] §3.2"
 
   imbalance_price_realtime_estimate:
+    rule: lag_after_period
     cadence_seconds: 60
     lag_seconds: 120
     revised: true           # estimate is superseded by the settled value
@@ -247,6 +250,7 @@ publication:
       as the target, and its revision to the settled value must be respected.
 
   regulation_state:
+    rule: lag_after_period
     cadence_seconds: 900
     lag_seconds: 122400
     revised: false
@@ -259,27 +263,33 @@ publication:
       settled value.
 
   day_ahead_price:
+    rule: published_day_before_at
+    local_time: "13:00"
+    timezone: Europe/Amsterdam
     cadence_seconds: 900    # 60-min MTU before 2025-10-01, 15-min from then
-    lag_seconds: -1         # published D-1 ~12:45 CET, i.e. BEFORE delivery
     revised: false
     confidence: primary
     note: >
       Reg. 543/2013 Art. 12(2)(d): published no later than one hour after gate
       closure. SDAC gate closure is 12:00 CET on D-1, so day-ahead prices for the
-      whole of day D are available from ~13:00 CET on D-1. Negative lag_seconds
-      is a sentinel meaning "available before the delivery day begins"; the
-      availability module must resolve it to the actual D-1 publication instant.
+      whole of day D are available from ~13:00 CET on D-1. The former
+      lag_seconds: -1 sentinel meaning "available before the delivery day
+      begins" has been replaced by this explicit day-before rule.
     source: "Reg. (EU) 543/2013 Art. 12(2)(d)"
 
   load_forecast_day_ahead:
-    lag_seconds: -1
+    rule: published_day_before_at
+    local_time: "10:00"
+    timezone: Europe/Amsterdam
     revised: true
     confidence: primary
     note: "Reg. 543/2013 Art. 6(2)(b): no later than two hours before day-ahead gate closure."
     source: "Reg. (EU) 543/2013 Art. 6(2)(b)"
 
   wind_solar_forecast_day_ahead:
-    lag_seconds: -1
+    rule: published_day_before_at
+    local_time: "17:00"
+    timezone: Europe/Amsterdam
     revised: true
     confidence: primary
     note: >
@@ -290,6 +300,7 @@ publication:
     source: "Reg. (EU) 543/2013 Art. 14(2)(d)"
 
   actual_generation:
+    rule: lag_after_period
     lag_seconds: 3600
     revised: true
     confidence: primary
@@ -297,6 +308,7 @@ publication:
     source: "Reg. (EU) 543/2013 Art. 16(2)(b)"
 
   cross_border_physical_flow:
+    rule: lag_after_period
     lag_seconds: 3600
     revised: true
     confidence: primary
@@ -304,6 +316,7 @@ publication:
     source: "Reg. (EU) 543/2013 Art. 12(2)(f)"
 
   activated_balancing_volumes:
+    rule: unresolved         # publication deadline never verified against the regulation text
     lag_seconds: 3600
     revised: true
     confidence: assumed     # TODO: Reg. 543/2013 balancing articles not yet read
