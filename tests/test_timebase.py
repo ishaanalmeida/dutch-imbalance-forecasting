@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 
 import pandas as pd
 import pytest
@@ -11,6 +11,7 @@ from src.data.timebase import (
     isp_start_of,
     isps_in_local_day,
     to_local,
+    to_utc,
 )
 
 
@@ -51,12 +52,12 @@ def test_local_conversion_marks_the_repeated_hour_distinctly() -> None:
 
 
 def test_isp_start_floors_to_quarter_hour() -> None:
-    ts = datetime(2026, 6, 17, 14, 37, 41, tzinfo=timezone.utc)  # noqa: UP017
-    assert isp_start_of(ts) == datetime(2026, 6, 17, 14, 30, tzinfo=timezone.utc)  # noqa: UP017
+    ts = datetime(2026, 6, 17, 14, 37, 41, tzinfo=UTC)
+    assert isp_start_of(ts) == datetime(2026, 6, 17, 14, 30, tzinfo=UTC)
 
 
 def test_isp_start_is_idempotent_on_a_boundary() -> None:
-    ts = datetime(2026, 6, 17, 14, 30, tzinfo=timezone.utc)  # noqa: UP017
+    ts = datetime(2026, 6, 17, 14, 30, tzinfo=UTC)
     assert isp_start_of(ts) == ts
 
 
@@ -68,9 +69,31 @@ def test_naive_datetime_is_rejected() -> None:
 
 def test_isp_index_is_left_closed() -> None:
     idx = isp_index(
-        datetime(2026, 6, 17, 0, 0, tzinfo=timezone.utc),  # noqa: UP017
-        datetime(2026, 6, 17, 1, 0, tzinfo=timezone.utc),  # noqa: UP017
+        datetime(2026, 6, 17, 0, 0, tzinfo=UTC),
+        datetime(2026, 6, 17, 1, 0, tzinfo=UTC),
     )
     assert len(idx) == 4
     assert idx[0] == pd.Timestamp("2026-06-17T00:00Z")
     assert idx[-1] == pd.Timestamp("2026-06-17T00:45Z")
+
+
+def test_to_utc_converts_aware_index() -> None:
+    """to_utc() converts a tz-aware index to UTC."""
+    idx = isps_in_local_day(date(2026, 6, 17))
+    utc_idx = to_utc(idx)
+    assert str(utc_idx.tz) == "UTC"
+    assert utc_idx.is_unique
+
+
+def test_to_utc_rejects_naive_index() -> None:
+    """to_utc() rejects a naive (tz-unaware) index."""
+    idx = pd.date_range("2026-06-17", periods=4, freq="15min")
+    with pytest.raises(ValueError, match="refusing to localise a naive index"):
+        to_utc(idx)
+
+
+def test_to_local_rejects_naive_index() -> None:
+    """to_local() rejects a naive (tz-unaware) index."""
+    idx = pd.date_range("2026-06-17", periods=4, freq="15min")
+    with pytest.raises(ValueError, match="refusing to localise a naive index"):
+        to_local(idx)

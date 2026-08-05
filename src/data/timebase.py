@@ -18,8 +18,6 @@ ISP_MINUTES: int = int(load_rules()["isp"]["length_minutes"])
 LOCAL_TZ = ZoneInfo(load_rules()["meta"]["timezone_presentation"])
 UTC = ZoneInfo("UTC")
 
-_ISP = timedelta(minutes=ISP_MINUTES)
-
 
 def _require_aware(ts: datetime) -> datetime:
     if ts.tzinfo is None or ts.tzinfo.utcoffset(ts) is None:
@@ -62,6 +60,8 @@ def isps_in_local_day(local_date: date) -> pd.DatetimeIndex:
 
 def to_local(idx: pd.DatetimeIndex) -> pd.DatetimeIndex:
     """Presentation only. Never use the result as a join key."""
+    if idx.tz is None:
+        raise ValueError("refusing to localise a naive index; supply tz-aware input")
     return idx.tz_convert(LOCAL_TZ)
 
 
