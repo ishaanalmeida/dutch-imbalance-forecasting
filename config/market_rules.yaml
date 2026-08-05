@@ -340,9 +340,17 @@ decision:
     strictly richer problem and is deliberately deferred; if it is added later,
     the cutoff must move with it, in this file, not in model code.
   # Effective information cutoff for target ISP t:
-  #   cutoff(t) = start(t) - publication[field].lag_seconds
-  # data_availability.available_at() must implement exactly this and the feature
-  # builder must refuse any feature whose availability postdates the cutoff.
+  #   availability of `field` for t is computed by
+  #   available_at(field, target_period_start=start(t)), dispatched on the
+  #   field's `rule` (lag_after_period / published_day_before_at / unresolved)
+  #   rather than a single subtraction — `published_day_before_at` fields are
+  #   pinned to a wall-clock local_time and cannot be expressed as
+  #   start(t) - lag_seconds.
+  #   `field` is usable for target ISP t iff
+  #     available_at(field, t) < decision_time(t),  where decision_time(t) = start(t).
+  # data_availability.available_at()/is_available() implement exactly this and
+  # the feature builder must refuse any feature that is not strictly available
+  # before decision_time(t).
 
 # ---------------------------------------------------------------------------
 # Structural breaks — regime changes that MUST be segmented in evaluation.

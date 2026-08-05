@@ -1,8 +1,14 @@
 # R7: raw third-party market data is never committed.
-data/
-!data/raw/.gitkeep
-!data/interim/.gitkeep
-!data/processed/.gitkeep
+# Anchored to the repo root (`/data/`, not `data/`): an unanchored pattern
+# matches a directory named `data` at ANY depth, which silently shadowed
+# `src/data/` (a real package, not the cache dir) and swallowed
+# `src/data/__init__.py` from every commit since Phase 0 without error -
+# `git add` skips ignored paths silently unless forced. Fixed here; the
+# missing `__init__.py` is restored to tracking in the same commit.
+/data/
+!/data/raw/.gitkeep
+!/data/interim/.gitkeep
+!/data/processed/.gitkeep
 
 # R8: secrets
 .env

@@ -214,6 +214,42 @@ removed for that reason.
 `test_unresolved_fields_carry_no_usable_lag` makes this structural: it fails
 if any future `unresolved` field is given a numeric `lag_seconds`.
 
+## ADR-010 — `.gitignore`'s `data/` pattern was unanchored and silently shadowed `src/data/`
+
+**Context.** Found while committing Task 3 (`src/data/data_availability.py`).
+`.gitignore` line 2 read `data/` with no leading slash. Gitignore patterns
+without a `/` elsewhere in them match a directory of that name at *any* depth,
+not just at the repo root — so `data/` matched both the intended
+`<root>/data/` (raw-data cache, R7) **and** `src/data/`, an actual Python
+package. `git add` silently skips ignored paths unless forced, so this had
+already dropped `src/data/__init__.py` from every commit since Phase 0 with no
+error at any point (`git ls-files src/data/` showed only `timebase.py`, added
+via an unrecorded force-add). It was about to do the same to
+`data_availability.py` — the exact deliverable this rigour zone exists to
+protect — silently.
+
+**Decision.** Anchored the pattern to the repo root: `data/` → `/data/` (and
+the three `!data/.../.gitkeep` negations the same way). `src/data/__init__.py`
+restored to tracking in this commit. Documented the fix inline in
+`.gitignore` itself so a future edit doesn't casually strip the leading slash.
+
+**Separate finding, NOT fixed here (out of scope for Task 3).** Even after
+anchoring, `git ls-tree HEAD -- data/` shows none of `data/raw/.gitkeep`,
+`data/interim/.gitkeep`, `data/processed/.gitkeep` have ever been tracked.
+This is the classic gitignore limitation: a negation cannot re-include a file
+inside a directory that the parent pattern already excludes — `/data/`
+excludes the directories themselves, so git prunes them during traversal and
+never evaluates the per-file `!` rules inside. Fixing it needs `/data/*` +
+`!/data/raw/` (etc.) rather than `/data/` + `!/data/raw/.gitkeep`. Flagged for
+whoever next touches repo scaffolding; not fixed here to keep this task's diff
+scoped to what it was asked to deliver.
+
+**Why this belongs in the decision log and not a silent side-fix.** The whole
+point of Task 3 is refusing to silently do the wrong thing. A collision in the
+mechanism that decides what even reaches version control is the same failure
+class at the tooling layer, and deserved the same treatment: caught, explained,
+fixed where it blocked delivery, and disclosed rather than quietly patched.
+
 **Same reasoning as ADR-006.** `balance_delta` already established the
 pattern (`lag_seconds: null` until the lag is *measured*, not asserted). This
 ADR generalises it: it is not particular to balance delta, it is the rule for
