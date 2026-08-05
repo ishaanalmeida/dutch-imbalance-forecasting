@@ -317,10 +317,14 @@ publication:
 
   activated_balancing_volumes:
     rule: unresolved         # publication deadline never verified against the regulation text
-    lag_seconds: 3600
+    lag_seconds: null        # was 3600 (an unverified assumption); nulled so it cannot be read as a measurement
     revised: true
     confidence: assumed     # TODO: Reg. 543/2013 balancing articles not yet read
-    note: "Deadline not yet verified against the regulation text. Do not use as a feature until it is."
+    note: >
+      Deadline not yet verified against the regulation text. Do not use as a
+      feature until it is. The previous lag_seconds: 3600 was an unverified
+      assumption, not a measurement; it has been replaced with null so that
+      code reading lag_seconds cannot mistake it for a real value.
 
 # ---------------------------------------------------------------------------
 # Q9 — Decision timestamp. THIS IS THE HARD INFORMATION CUTOFF IN THE BACKTEST.

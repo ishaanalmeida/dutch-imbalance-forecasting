@@ -37,3 +37,14 @@ def test_day_before_fields_declare_a_publication_time() -> None:
         if spec["rule"] == "published_day_before_at":
             assert "local_time" in spec, f"{field} needs a local_time"
             assert "timezone" in spec, f"{field} needs a timezone"
+
+
+def test_unresolved_fields_carry_no_usable_lag() -> None:
+    """A field whose lag is unresolved must not also carry a number that code
+    could read and mistake for a measurement."""
+    for field, spec in load_rules()["publication"].items():
+        if spec["rule"] == "unresolved":
+            assert spec.get("lag_seconds") is None, (
+                f"{field} declares rule: unresolved but still carries "
+                f"lag_seconds={spec.get('lag_seconds')!r}"
+            )

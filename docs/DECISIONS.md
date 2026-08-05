@@ -193,3 +193,28 @@ too thin for walk-forward plus an untouched holdout (R2).
 broadcast T3 carries a step-function artefact that is a property of the MTU
 mismatch and not of the market. Segmentation is what keeps that honest; the
 segmented tables are the reported result, the pooled number is not.
+
+## ADR-009 — `rule: unresolved` always pairs with `lag_seconds: null`
+
+**Context.** Task 2 review found `publication.activated_balancing_volumes`
+carrying `rule: unresolved` next to `lag_seconds: 3600` — a live-looking
+number left over from before the field had a `rule` at all. It was safe only
+because `available_at()` (Task 3) dispatches on `rule` before touching
+`lag_seconds`. The moment any code path reads `lag_seconds` without checking
+`rule` first, it silently uses a made-up lag — the same hazard the `-1`
+sentinel refactor (this task) existed to remove, recurring at smaller scale.
+
+**Decision.** Any `publication` field with `rule: unresolved` must set
+`lag_seconds: null`. A placeholder number, however clearly labelled `assumed`
+in the neighbouring `confidence` field, is indistinguishable from a real
+measurement at the call site that only reads `lag_seconds`.
+`activated_balancing_volumes.lag_seconds` is now `null`; the note records that
+the prior `3600` was an unverified assumption, not a measurement, and has been
+removed for that reason.
+`test_unresolved_fields_carry_no_usable_lag` makes this structural: it fails
+if any future `unresolved` field is given a numeric `lag_seconds`.
+
+**Same reasoning as ADR-006.** `balance_delta` already established the
+pattern (`lag_seconds: null` until the lag is *measured*, not asserted). This
+ADR generalises it: it is not particular to balance delta, it is the rule for
+every `unresolved` publication field.
