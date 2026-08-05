@@ -214,6 +214,11 @@ removed for that reason.
 `test_unresolved_fields_carry_no_usable_lag` makes this structural: it fails
 if any future `unresolved` field is given a numeric `lag_seconds`.
 
+**Same reasoning as ADR-006.** `balance_delta` already established the
+pattern (`lag_seconds: null` until the lag is *measured*, not asserted). This
+ADR generalises it: it is not particular to balance delta, it is the rule for
+every `unresolved` publication field.
+
 ## ADR-010 — `.gitignore`'s `data/` pattern was unanchored and silently shadowed `src/data/`
 
 **Context.** Found while committing Task 3 (`src/data/data_availability.py`).
@@ -249,8 +254,3 @@ point of Task 3 is refusing to silently do the wrong thing. A collision in the
 mechanism that decides what even reaches version control is the same failure
 class at the tooling layer, and deserved the same treatment: caught, explained,
 fixed where it blocked delivery, and disclosed rather than quietly patched.
-
-**Same reasoning as ADR-006.** `balance_delta` already established the
-pattern (`lag_seconds: null` until the lag is *measured*, not asserted). This
-ADR generalises it: it is not particular to balance delta, it is the rule for
-every `unresolved` publication field.

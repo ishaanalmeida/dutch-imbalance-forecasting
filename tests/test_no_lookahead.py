@@ -18,6 +18,7 @@ from src.data.data_availability import (
     available_at,
     is_available,
 )
+from src.data.timebase import ISP_MINUTES
 from src.market import load_rules
 
 ISP = datetime(2026, 6, 17, 14, 30, tzinfo=UTC)
@@ -34,13 +35,21 @@ def test_the_target_can_never_be_used_as_a_feature() -> None:
 
 def test_no_field_is_available_before_the_period_it_describes_unless_declared() -> None:
     """Only day-before-published fields may precede delivery. Anything else
-    claiming pre-delivery availability is a config error."""
+    claiming pre-delivery availability is a config error.
+
+    The real invariant is availability >= period END (start + ISP_MINUTES),
+    not just >= start: lag_after_period is measured from the period's end, so
+    a bare `>= ISP` bound would also pass an implementation that (wrongly)
+    measured lag from the period's START -- exactly the off-by-one this
+    file's other test targets directly, but this one would silently miss it
+    too if left at `>= ISP`."""
+    period_end = ISP + timedelta(minutes=ISP_MINUTES)
     for field, spec in load_rules()["publication"].items():
         if spec["rule"] == "unresolved":
             continue
         got = available_at(field, ISP)
         if spec["rule"] != "published_day_before_at":
-            assert got >= ISP, f"{field} claims availability before its own period"
+            assert got >= period_end, f"{field} claims availability before its period ends"
 
 
 def test_same_isp_realtime_data_is_not_available_at_isp_start() -> None:
@@ -98,3 +107,30 @@ def test_unresolved_fields_never_yield_a_timestamp_whatever_lag_they_carry() -> 
         if spec["rule"] == "unresolved":
             with pytest.raises(UnresolvedLagError):
                 available_at(field, ISP)
+
+
+def test_rule_unresolved_wins_even_when_lag_seconds_is_present(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The test above doesn't actually discriminate rule-first dispatch from
+    lag-first dispatch: both real `unresolved` fields (balance_delta,
+    activated_balancing_volumes) carry `lag_seconds: null` today (ADR-009),
+    so a lag-first implementation would raise on the null check for the same
+    wrong reason and pass that test anyway. This poisons a spec with
+    `rule: unresolved` paired with a *numeric* lag_seconds -- the one case
+    that actually proves `rule` is checked before `lag_seconds` is ever
+    read, which is the claim ADR-009 relies on."""
+    monkeypatch.setattr(
+        "src.data.data_availability.load_rules",
+        lambda: {
+            "publication": {
+                "poisoned_field": {
+                    "rule": "unresolved",
+                    "lag_seconds": 60,
+                    "lag_confidence": "unresolved",
+                },
+            }
+        },
+    )
+    with pytest.raises(UnresolvedLagError):
+        available_at("poisoned_field", ISP)

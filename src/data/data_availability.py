@@ -106,11 +106,28 @@ def available_at(field: str, target_period_start: datetime) -> datetime:
                 f"null. This is a config error: either set a measured "
                 f"lag_seconds, or change the rule to 'unresolved'."
             )
-        if not isinstance(lag, int):
+        if isinstance(lag, bool) or not isinstance(lag, int):
+            # isinstance(True, int) is True in Python, and PyYAML 1.1 parses
+            # yes/on/true as booleans -- excluding bool explicitly stops
+            # `lag_seconds: yes` from silently becoming a 1-second lag.
             raise UnresolvedLagError(
                 f"{field!r} lag_seconds must be an int number of seconds, got "
                 f"{type(lag).__name__}: {lag!r}. This is a config error in "
                 f"config/market_rules.yaml."
+            )
+        if lag < 0:
+            # This repo shipped exactly this bug once already as the
+            # `lag_seconds: -1` sentinel (see this module's test file's
+            # docstring). A negative lag_after_period value would mean the
+            # datum is available before the period it describes even ENDS,
+            # which this rule can never legitimately express.
+            raise UnresolvedLagError(
+                f"{field!r} lag_seconds is negative ({lag!r}). "
+                f"lag_after_period is measured from the period's END, so a "
+                f"negative value would make the datum available before its "
+                f"own period ends -- always a config error. Use "
+                f"'published_day_before_at' for genuinely pre-delivery "
+                f"fields, or fix the config."
             )
         period_end = target_period_start + timedelta(minutes=ISP_MINUTES)
         return period_end + timedelta(seconds=lag)
@@ -151,8 +168,14 @@ def assert_available(field: str, target_period_start: datetime, decision_time: d
     """
     if not is_available(field, target_period_start, decision_time):
         published = available_at(field, target_period_start)
+        # Normalise all three instants to UTC: `published` is UTC by
+        # construction, but target_period_start/decision_time are whatever
+        # tz the caller passed. Printing a mix of offsets in one message is
+        # the kind of thing that looks fine until someone reads it at 2am.
+        target_utc = target_period_start.astimezone(UTC)
+        decision_utc = decision_time.astimezone(UTC)
         raise LookAheadError(
-            f"R1 violation: {field!r} for ISP {target_period_start.isoformat()} "
+            f"R1 violation: {field!r} for ISP {target_utc.isoformat()} "
             f"is available at {published.isoformat()}, which is not strictly "
-            f"before the decision time {decision_time.isoformat()}."
+            f"before the decision time {decision_utc.isoformat()}."
         )

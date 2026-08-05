@@ -13,6 +13,7 @@ Task 3 extends this file with the actual `available_at()` enforcement tests.
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -116,3 +117,116 @@ def test_assert_available_raises_with_a_diagnostic_message() -> None:
 def test_naive_decision_time_is_rejected() -> None:
     with pytest.raises(ValueError, match="timezone-aware"):
         is_available("actual_generation", ISP, datetime(2026, 6, 17, 16, 0))
+
+
+def test_look_ahead_error_message_normalises_all_timestamps_to_utc() -> None:
+    """`published` is UTC by construction; target_period_start and
+    decision_time must be normalised to UTC too, or the message mixes offsets
+    and becomes misleading when a caller passes a non-UTC-tz instant."""
+    amsterdam = ZoneInfo("Europe/Amsterdam")
+    isp_local = ISP.astimezone(amsterdam)  # same instant, +02:00 CEST
+    with pytest.raises(LookAheadError) as exc:
+        assert_available("imbalance_price_settled", isp_local, isp_local)
+    message = str(exc.value)
+    assert ISP.isoformat() in message, message
+    assert "+02:00" not in message, message
+
+
+# ---------------------------------------------------------------------------
+# Fix round (coordinator review): guards that were previously exercised only
+# incidentally, or not at all. Each poisons a minimal, hand-built publication
+# spec via monkeypatch rather than mutating config/market_rules.yaml.
+# ---------------------------------------------------------------------------
+
+
+def _stub_publication(
+    monkeypatch: pytest.MonkeyPatch, publication: dict[str, dict[str, object]]
+) -> None:
+    """Replace load_rules() as seen by data_availability with a minimal
+    hand-built publication block, so a malformed spec can be tested without
+    touching the real config."""
+    monkeypatch.setattr(
+        "src.data.data_availability.load_rules", lambda: {"publication": publication}
+    )
+
+
+def test_negative_lag_seconds_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A negative lag_after_period value would mean the datum is available
+    before the period it describes even ENDS. This repo shipped exactly this
+    class of bug once already as the lag_seconds: -1 sentinel (see this
+    file's module docstring) -- available_at must refuse it outright, not
+    silently grant a day of look-ahead."""
+    _stub_publication(
+        monkeypatch,
+        {"actual_generation": {"rule": "lag_after_period", "lag_seconds": -86400}},
+    )
+    with pytest.raises(UnresolvedLagError, match="negative"):
+        available_at("actual_generation", ISP)
+
+
+def test_boolean_lag_seconds_is_rejected_as_not_an_int(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """isinstance(True, int) is True in Python, and PyYAML 1.1 parses
+    yes/on/true as booleans -- lag_seconds: yes must not silently resolve to
+    a 1-second lag."""
+    _stub_publication(
+        monkeypatch,
+        {"actual_generation": {"rule": "lag_after_period", "lag_seconds": True}},
+    )
+    with pytest.raises(UnresolvedLagError, match="int"):
+        available_at("actual_generation", ISP)
+
+
+def test_misaligned_target_period_start_is_rejected() -> None:
+    with pytest.raises(ValueError, match="ISP boundary"):
+        available_at("actual_generation", ISP + timedelta(minutes=1))
+
+
+def test_naive_target_period_start_is_rejected() -> None:
+    with pytest.raises(ValueError, match="timezone-aware"):
+        available_at("actual_generation", datetime(2026, 6, 17, 14, 30))
+
+
+def test_unhandled_publication_rule_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    _stub_publication(monkeypatch, {"mystery_field": {"rule": "measured_by_tarot_reading"}})
+    with pytest.raises(UnknownFieldError):
+        available_at("mystery_field", ISP)
+
+
+def test_lag_after_period_with_null_lag_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Distinct from `rule: unresolved` (ADR-009): a field that claims
+    lag_after_period but omits the lag entirely is a plain config error and
+    must refuse cleanly rather than crash trying to add None to a
+    timedelta."""
+    _stub_publication(
+        monkeypatch, {"phantom_field": {"rule": "lag_after_period", "lag_seconds": None}}
+    )
+    with pytest.raises(UnresolvedLagError, match="null"):
+        available_at("phantom_field", ISP)
+
+
+def test_day_ahead_price_uses_local_not_utc_calendar_date() -> None:
+    """22:30 UTC in June is already the 18th in Amsterdam (CEST, UTC+2). An
+    implementation keying off the UTC calendar date instead of the local one
+    would grant a full extra day of apparent availability for roughly 8 ISPs
+    per day, all year round."""
+    isp = datetime(2026, 6, 17, 22, 30, tzinfo=UTC)
+    assert available_at("day_ahead_price", isp) == datetime(2026, 6, 17, 11, 0, tzinfo=UTC)
+
+
+def test_day_ahead_price_publication_offset_across_spring_forward() -> None:
+    """Delivery (2026-03-29 12:00Z) is after the spring-forward transition,
+    so local delivery is CEST (UTC+2); publication the day before is still
+    pre-transition CET (UTC+1), so the UTC offset of the result differs from
+    the delivery ISP's own offset."""
+    isp = datetime(2026, 3, 29, 12, 0, tzinfo=UTC)
+    assert available_at("day_ahead_price", isp) == datetime(2026, 3, 28, 12, 0, tzinfo=UTC)
+
+
+def test_day_ahead_price_publication_offset_across_fall_back() -> None:
+    """Delivery (2026-10-25 12:00Z) is after the fall-back transition, so
+    local delivery is CET (UTC+1); publication the day before is still
+    pre-transition CEST (UTC+2)."""
+    isp = datetime(2026, 10, 25, 12, 0, tzinfo=UTC)
+    assert available_at("day_ahead_price", isp) == datetime(2026, 10, 24, 11, 0, tzinfo=UTC)
