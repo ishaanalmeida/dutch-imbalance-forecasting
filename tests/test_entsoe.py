@@ -21,12 +21,55 @@ from __future__ import annotations
 
 import os
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import cast
 
 import pandas as pd
 import pytest
 
-from src.data import entsoe
+from src.data import cache, entsoe
+
+
+@pytest.fixture(autouse=True)
+def _tmp_cache_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(cache, "DATA_ROOT", tmp_path)
+
+
+class _FakeClient:
+    """Stands in for EntsoePandasClient: returns whatever the test hands it,
+    no network, no token. Only used via `monkeypatch.setattr(entsoe, "_client", ...)`."""
+
+    def __init__(
+        self,
+        imbalance: pd.DataFrame | None = None,
+        day_ahead: pd.Series[float] | None = None,
+        load: pd.Series[float] | None = None,
+        wind_solar: pd.DataFrame | None = None,
+    ) -> None:
+        self.imbalance = imbalance
+        self.day_ahead = day_ahead
+        self.load = load
+        self.wind_solar = wind_solar
+
+    def query_imbalance_prices(self, domain: str, start: object, end: object) -> pd.DataFrame:
+        assert self.imbalance is not None
+        return self.imbalance
+
+    def query_day_ahead_prices(
+        self, domain: str, start: object, end: object
+    ) -> pd.Series[float]:
+        assert self.day_ahead is not None
+        return self.day_ahead
+
+    def query_load_forecast(self, domain: str, start: object, end: object) -> pd.Series[float]:
+        assert self.load is not None
+        return self.load
+
+    def query_wind_and_solar_forecast(
+        self, domain: str, start: object, end: object
+    ) -> pd.DataFrame:
+        assert self.wind_solar is not None
+        return self.wind_solar
 
 
 def test_missing_token_raises_a_clear_error(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -107,3 +150,100 @@ def test_live_wind_solar_fetch_returns_utc_frame() -> None:
         datetime(2026, 6, 2, tzinfo=UTC),
     )
     assert str(cast(pd.DatetimeIndex, df.index).tz) == "UTC"
+
+
+# --- write_frame wiring (Finding 1): fetchers must persist the parsed frame
+# to the Parquet cache, not just the raw response. Every payload below is
+# SYNTHETIC -- hand-built to exercise the caching path, not a recorded
+# ENTSO-E response (R3) -- see module docstring's note on why no "real"
+# response fixture is committed here.
+
+
+def test_fetch_imbalance_prices_writes_to_parquet_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+    idx = pd.date_range("2026-06-01", periods=4, freq="15min", tz="UTC")
+    synthetic = pd.DataFrame(
+        {"Long": [1.0, 2.0, 3.0, 4.0], "Short": [1.1, 2.1, 3.1, 4.1]}, index=idx
+    )
+    monkeypatch.setattr(entsoe, "_client", lambda: _FakeClient(imbalance=synthetic))
+
+    out = entsoe.fetch_imbalance_prices(
+        datetime(2026, 6, 1, tzinfo=UTC), datetime(2026, 6, 1, 1, tzinfo=UTC)
+    )
+
+    cached = cache.read_frame(
+        "imbalance_prices", datetime(2026, 6, 1, tzinfo=UTC), datetime(2026, 6, 2, tzinfo=UTC)
+    )
+    # Parquet does not persist DatetimeIndex.freq -- see test_cache.py's
+    # test_frame_round_trip_preserves_utc_index for the same hazard.
+    pd.testing.assert_frame_equal(cached, out, check_freq=False)
+
+
+def test_fetch_day_ahead_prices_writes_to_parquet_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+    idx = pd.date_range("2026-06-01", periods=4, freq="15min", tz="UTC")
+    synthetic = cast(
+        "pd.Series[float]", pd.Series([10.0, 20.0, 30.0, 40.0], index=idx, name="Price")
+    )
+    monkeypatch.setattr(entsoe, "_client", lambda: _FakeClient(day_ahead=synthetic))
+
+    out = entsoe.fetch_day_ahead_prices(
+        datetime(2026, 6, 1, tzinfo=UTC), datetime(2026, 6, 1, 1, tzinfo=UTC)
+    )
+
+    cached = cache.read_frame(
+        "day_ahead_price", datetime(2026, 6, 1, tzinfo=UTC), datetime(2026, 6, 2, tzinfo=UTC)
+    )
+    pd.testing.assert_series_equal(cached["day_ahead_price"], out, check_freq=False)
+
+
+def test_fetch_load_forecast_writes_to_parquet_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+    idx = pd.date_range("2026-06-01", periods=4, freq="15min", tz="UTC")
+    synthetic = cast(
+        "pd.Series[float]", pd.Series([100.0, 110.0, 120.0, 130.0], index=idx, name="Load")
+    )
+    monkeypatch.setattr(entsoe, "_client", lambda: _FakeClient(load=synthetic))
+
+    out = entsoe.fetch_load_forecast(
+        datetime(2026, 6, 1, tzinfo=UTC), datetime(2026, 6, 1, 1, tzinfo=UTC)
+    )
+
+    cached = cache.read_frame(
+        "load_forecast", datetime(2026, 6, 1, tzinfo=UTC), datetime(2026, 6, 2, tzinfo=UTC)
+    )
+    pd.testing.assert_series_equal(cached["load_forecast"], out, check_freq=False)
+
+
+def test_fetch_wind_solar_forecast_writes_to_parquet_cache(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    idx = pd.date_range("2026-06-01", periods=4, freq="15min", tz="UTC")
+    synthetic = pd.DataFrame(
+        {"Wind Onshore": [1.0, 2.0, 3.0, 4.0], "Solar": [0.0, 0.0, 1.0, 2.0]}, index=idx
+    )
+    monkeypatch.setattr(entsoe, "_client", lambda: _FakeClient(wind_solar=synthetic))
+
+    out = entsoe.fetch_wind_solar_forecast(
+        datetime(2026, 6, 1, tzinfo=UTC), datetime(2026, 6, 1, 1, tzinfo=UTC)
+    )
+
+    cached = cache.read_frame(
+        "wind_solar_forecast", datetime(2026, 6, 1, tzinfo=UTC), datetime(2026, 6, 2, tzinfo=UTC)
+    )
+    pd.testing.assert_frame_equal(cached, out, check_freq=False)
+
+
+def test_fetch_imbalance_prices_does_not_write_empty_partition(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R3: an empty partition on disk would read as 'we have data for this
+    month, and it is empty', which is not true -- we have no data at all."""
+    empty = pd.DataFrame(
+        {"Long": pd.Series(dtype="float64"), "Short": pd.Series(dtype="float64")},
+        index=pd.DatetimeIndex([], tz="UTC"),
+    )
+    monkeypatch.setattr(entsoe, "_client", lambda: _FakeClient(imbalance=empty))
+
+    entsoe.fetch_imbalance_prices(
+        datetime(2026, 6, 1, tzinfo=UTC), datetime(2026, 6, 1, 1, tzinfo=UTC)
+    )
+
+    assert list((cache.DATA_ROOT / "processed" / "imbalance_prices").glob("*.parquet")) == []

@@ -5,9 +5,23 @@
 # `src/data/__init__.py` from every commit since Phase 0 without error -
 # `git add` skips ignored paths silently unless forced. Fixed here; the
 # missing `__init__.py` is restored to tracking in the same commit.
-/data/
+#
+# `/data/*` (not `/data/`) ignores the directory's CONTENTS, not the
+# directory itself, so the per-subdirectory negations below actually take
+# effect: git cannot re-include a file inside a directory the parent
+# pattern already excludes, so `/data/` + `!/data/raw/.gitkeep` was dead
+# (docs/DECISIONS.md) and every .gitkeep below was silently untracked.
+# Each subdirectory needs its own re-include-dir / exclude-contents /
+# re-include-.gitkeep triplet.
+/data/*
+!/data/raw/
+!/data/interim/
+!/data/processed/
+/data/raw/*
 !/data/raw/.gitkeep
+/data/interim/*
 !/data/interim/.gitkeep
+/data/processed/*
 !/data/processed/.gitkeep
 
 # R8: secrets

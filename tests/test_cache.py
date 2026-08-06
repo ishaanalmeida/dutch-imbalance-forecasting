@@ -72,6 +72,16 @@ def test_frame_round_trip_preserves_utc_index() -> None:
     pd.testing.assert_frame_equal(got, df, check_freq=False)
 
 
+def test_read_frame_rejects_naive_start() -> None:
+    with pytest.raises(ValueError, match="naive"):
+        cache.read_frame("prices", datetime(2026, 6, 1), datetime(2026, 6, 2, tzinfo=UTC))
+
+
+def test_read_frame_rejects_naive_end() -> None:
+    with pytest.raises(ValueError, match="naive"):
+        cache.read_frame("prices", datetime(2026, 6, 1, tzinfo=UTC), datetime(2026, 6, 2))
+
+
 def test_rewriting_a_month_replaces_not_duplicates() -> None:
     idx = pd.date_range("2026-06-01", periods=4, freq="15min", tz="UTC")
     cache.write_frame("prices", pd.DataFrame({"value": [1, 2, 3, 4]}, index=idx))

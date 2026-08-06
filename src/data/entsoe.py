@@ -27,7 +27,7 @@ from typing import cast
 import pandas as pd
 from entsoe.entsoe import EntsoePandasClient
 
-from src.data.cache import store_raw
+from src.data.cache import store_raw, write_frame
 
 NL_DOMAIN = "10YNL----------L"
 
@@ -83,6 +83,8 @@ def fetch_imbalance_prices(start: datetime, end: datetime) -> pd.DataFrame:
     raw = _client().query_imbalance_prices(NL_DOMAIN, start=s, end=e)
     df = _normalise_columns(raw.tz_convert("UTC"))
     _record("imbalance_prices", start, end, df)
+    if not df.empty:
+        write_frame("imbalance_prices", df)
     return df
 
 
@@ -90,7 +92,10 @@ def fetch_day_ahead_prices(start: datetime, end: datetime) -> pd.Series[float]:
     s, e = _stamps(start, end)
     series = _client().query_day_ahead_prices(NL_DOMAIN, start=s, end=e).tz_convert("UTC")
     _record("day_ahead_prices", start, end, series.to_frame("day_ahead_price"))
-    return cast("pd.Series[float]", series.rename("day_ahead_price"))
+    named = cast("pd.Series[float]", series.rename("day_ahead_price"))
+    if not named.empty:
+        write_frame("day_ahead_price", named.to_frame())
+    return named
 
 
 def fetch_load_forecast(start: datetime, end: datetime) -> pd.Series[float]:
@@ -100,7 +105,10 @@ def fetch_load_forecast(start: datetime, end: datetime) -> pd.Series[float]:
     )
     series = series.tz_convert("UTC")
     _record("load_forecast", start, end, series.to_frame("load_forecast"))
-    return series.rename("load_forecast")
+    named = series.rename("load_forecast")
+    if not named.empty:
+        write_frame("load_forecast", named.to_frame())
+    return named
 
 
 def fetch_wind_solar_forecast(start: datetime, end: datetime) -> pd.DataFrame:
@@ -108,4 +116,6 @@ def fetch_wind_solar_forecast(start: datetime, end: datetime) -> pd.DataFrame:
     raw = _client().query_wind_and_solar_forecast(NL_DOMAIN, start=s, end=e)
     df = _normalise_columns(raw.tz_convert("UTC"))
     _record("wind_solar_forecast", start, end, df)
+    if not df.empty:
+        write_frame("wind_solar_forecast", df)
     return df

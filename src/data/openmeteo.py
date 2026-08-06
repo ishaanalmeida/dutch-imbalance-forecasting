@@ -19,7 +19,7 @@ from typing import Any
 import httpx
 import pandas as pd
 
-from src.data.cache import store_raw
+from src.data.cache import store_raw, write_frame
 
 BASE_URL = "https://historical-forecast-api.open-meteo.com/v1/forecast"
 HOURLY_VARS = ("wind_speed_100m", "shortwave_radiation", "temperature_2m")
@@ -80,4 +80,7 @@ def fetch_historical_forecast(
         response.content,
         datetime.now(UTC),
     )
-    return _parse(response.json())
+    df = _parse(response.json())
+    if not df.empty:
+        write_frame("weather_forecast", df)
+    return df

@@ -254,3 +254,41 @@ point of Task 3 is refusing to silently do the wrong thing. A collision in the
 mechanism that decides what even reaches version control is the same failure
 class at the tooling layer, and deserved the same treatment: caught, explained,
 fixed where it blocked delivery, and disclosed rather than quietly patched.
+
+## ADR-011 — Closed the ADR-010 `.gitkeep` deferral; also wired `write_frame` into the fetchers
+
+**Context.** Final whole-branch review flagged the item ADR-010 explicitly
+deferred (`git ls-files data/` was empty; `git check-ignore -v
+data/raw/.gitkeep` showed the negation lines were dead), plus a real gap in
+the data layer: `cache.write_frame()` had no production caller.
+`src/data/entsoe.py` and `src/data/openmeteo.py` fetchers called `store_raw()`
+for the raw payload but never persisted the parsed frame, so
+`scripts/build_quality_report.py`'s `read_frame()` call had nothing to read
+once the ENTSO-E token arrives — a silent, undiagnosable empty report.
+
+**Decision, `.gitkeep`.** Implemented ADR-010's own proposed fix rather than
+the alternative (dropping the negations): `/data/*` + per-subdirectory
+`!/data/raw/` / `/data/raw/*` / `!/data/raw/.gitkeep` triplets, one per
+subdirectory. Verified both directions explicitly:
+`git check-ignore -v data/raw/.gitkeep` now reports *not* ignored (exit 1, no
+output) and `git check-ignore -v data/raw/anything.parquet` still reports
+ignored (via `/data/raw/*`, `*.parquet` as backstop) — R7 intact. The three
+`.gitkeep` files are added to tracking in this commit so a fresh clone gets
+the `data/` tree back.
+
+**Decision, `write_frame` wiring.** Each fetcher now calls `write_frame()`
+with a dataset name after `store_raw()`, not instead of it: `imbalance_prices`,
+`day_ahead_price`, `load_forecast`, `wind_solar_forecast` (entsoe.py),
+`weather_forecast` (openmeteo.py). An empty parsed frame is never written —
+writing an empty partition would read as "we have data for this month, and
+it's empty" when the true state is "we have no data at all" (R3). Covered by
+offline tests that monkeypatch the ENTSO-E client / `httpx` with hand-built,
+explicitly-labelled-synthetic payloads and assert the Parquet file appears
+under a `tmp_path`-monkeypatched `cache.DATA_ROOT` and round-trips, plus a
+counterpart test per module proving the empty-frame path writes nothing.
+
+**Also closed while in this file.** `read_frame()` now raises the same
+explicit `ValueError` as `write_frame()` on a naive `start`/`end`, instead of
+surfacing pandas' incidental `TypeError`. `cache.py`'s module docstring now
+states `load_raw` is the intended re-parse entry point and is not yet wired
+into any pipeline, rather than leaving that claim only implicit.

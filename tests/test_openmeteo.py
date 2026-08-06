@@ -13,13 +13,48 @@ smoke test for the manual, network-hitting check.
 from __future__ import annotations
 
 import inspect
-from datetime import date
-from typing import cast
+from datetime import UTC, date, datetime
+from pathlib import Path
+from typing import Any, cast
 
+import httpx
 import pandas as pd
 import pytest
 
-from src.data import openmeteo
+from src.data import cache, openmeteo
+
+
+@pytest.fixture(autouse=True)
+def _tmp_cache_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(cache, "DATA_ROOT", tmp_path)
+
+
+class _FakeResponse:
+    def __init__(self, payload: dict[str, Any], content: bytes) -> None:
+        self._payload = payload
+        self.content = content
+
+    def raise_for_status(self) -> None:
+        return None
+
+    def json(self) -> dict[str, Any]:
+        return self._payload
+
+
+class _FakeHttpxClient:
+    """Stands in for httpx.Client as a context manager, no network."""
+
+    def __init__(self, response: _FakeResponse) -> None:
+        self._response = response
+
+    def __enter__(self) -> _FakeHttpxClient:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        return None
+
+    def get(self, url: str, params: object = None) -> _FakeResponse:
+        return self._response
 
 
 def test_only_the_historical_forecast_host_is_used() -> None:
@@ -74,3 +109,54 @@ def test_fetch_historical_forecast_returns_48_rows_for_two_day_range() -> None:
     df = openmeteo.fetch_historical_forecast(date(2026, 6, 1), date(2026, 6, 2))
     assert df.shape == (48, 3)
     assert str(cast(pd.DatetimeIndex, df.index).tz) == "UTC"
+
+
+# --- write_frame wiring (Finding 1): the fetcher must persist the parsed
+# frame to the Parquet cache, not just the raw response. The payload below is
+# SYNTHETIC -- hand-built to exercise the caching path, not a recorded
+# Open-Meteo response (R3).
+
+
+def test_fetch_historical_forecast_writes_to_parquet_cache(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = {
+        "hourly": {
+            "time": ["2026-06-01T00:00", "2026-06-01T01:00"],
+            "wind_speed_100m": [12.0, 14.0],
+            "shortwave_radiation": [0.0, 5.0],
+            "temperature_2m": [11.0, 11.5],
+        }
+    }
+    fake_response = _FakeResponse(payload, b"raw-bytes")
+    monkeypatch.setattr(httpx, "Client", lambda **kwargs: _FakeHttpxClient(fake_response))
+    monkeypatch.setattr(httpx, "HTTPTransport", lambda **kwargs: None)
+
+    out = openmeteo.fetch_historical_forecast(date(2026, 6, 1), date(2026, 6, 1))
+
+    cached = cache.read_frame(
+        "weather_forecast", datetime(2026, 6, 1, tzinfo=UTC), datetime(2026, 6, 2, tzinfo=UTC)
+    )
+    pd.testing.assert_frame_equal(cached, out)
+
+
+def test_fetch_historical_forecast_does_not_write_empty_partition(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R3: an empty partition on disk would read as 'we have data for this
+    month, and it is empty', which is not true -- we have no data at all."""
+    payload: dict[str, Any] = {
+        "hourly": {
+            "time": [],
+            "wind_speed_100m": [],
+            "shortwave_radiation": [],
+            "temperature_2m": [],
+        }
+    }
+    fake_response = _FakeResponse(payload, b"raw-bytes")
+    monkeypatch.setattr(httpx, "Client", lambda **kwargs: _FakeHttpxClient(fake_response))
+    monkeypatch.setattr(httpx, "HTTPTransport", lambda **kwargs: None)
+
+    openmeteo.fetch_historical_forecast(date(2026, 6, 1), date(2026, 6, 1))
+
+    assert list((cache.DATA_ROOT / "processed" / "weather_forecast").glob("*.parquet")) == []

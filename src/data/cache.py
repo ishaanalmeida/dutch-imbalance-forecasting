@@ -1,6 +1,9 @@
 """Local cache. Raw responses are stored before parsing so a parser change
 never forces a re-fetch (and never burns API quota).
 
+`load_raw` is the intended re-parse entry point for that scenario -- it is
+not yet called from any pipeline, since no parser has needed to change yet.
+
 Lean zone: this is plumbing. Parquet + a directory layout, nothing more.
 """
 
@@ -76,6 +79,10 @@ def write_frame(dataset: str, df: pd.DataFrame) -> list[Path]:
 
 def read_frame(dataset: str, start: datetime, end: datetime) -> pd.DataFrame:
     """Read [start, end). Returns an empty frame if nothing is cached."""
+    if start.tzinfo is None:
+        raise ValueError("refusing to read with a naive start; supply tz-aware UTC")
+    if end.tzinfo is None:
+        raise ValueError("refusing to read with a naive end; supply tz-aware UTC")
     files = sorted(_dataset_dir(dataset).glob("*.parquet"))
     if not files:
         return pd.DataFrame()
