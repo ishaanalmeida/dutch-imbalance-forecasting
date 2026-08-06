@@ -1,0 +1,162 @@
+"""Guards against the project's highest silent-failure risk (CLAUDE.md §3):
+ERA5 reanalysis (archive-api.open-meteo.com) is observed weather, not a
+forecast issued at decision time. Feeding it to the model produces excellent
+metrics and zero information. Two independent guards below: a source-level
+check that the reanalysis host string appears nowhere in the module, and a
+runtime check that rejects a reanalysis URL if one ever reaches the fetcher.
+
+All tests here run offline. The live end-to-end call is `@pytest.mark.integration`
+and excluded by default (see pyproject.toml addopts) -- see the brief's Step 6
+smoke test for the manual, network-hitting check.
+"""
+
+from __future__ import annotations
+
+import inspect
+from datetime import UTC, date, datetime
+from pathlib import Path
+from typing import Any, cast
+
+import httpx
+import pandas as pd
+import pytest
+
+from src.data import cache, openmeteo
+
+
+@pytest.fixture(autouse=True)
+def _tmp_cache_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(cache, "DATA_ROOT", tmp_path)
+
+
+class _FakeResponse:
+    def __init__(self, payload: dict[str, Any], content: bytes) -> None:
+        self._payload = payload
+        self.content = content
+
+    def raise_for_status(self) -> None:
+        return None
+
+    def json(self) -> dict[str, Any]:
+        return self._payload
+
+
+class _FakeHttpxClient:
+    """Stands in for httpx.Client as a context manager, no network."""
+
+    def __init__(self, response: _FakeResponse) -> None:
+        self._response = response
+
+    def __enter__(self) -> _FakeHttpxClient:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        return None
+
+    def get(self, url: str, params: object = None) -> _FakeResponse:
+        return self._response
+
+
+def test_only_the_historical_forecast_host_is_used() -> None:
+    """R1's weather clause. The reanalysis archive must never appear."""
+    assert openmeteo.BASE_URL.startswith("https://historical-forecast-api.open-meteo.com")
+
+
+def test_reanalysis_host_appears_nowhere_in_the_module() -> None:
+    source = inspect.getsource(openmeteo)
+    assert "archive-api.open-meteo.com" not in source, (
+        "ERA5 reanalysis is observed weather, not a forecast. Using it as a "
+        "feature is the most likely silent failure in this project."
+    )
+    assert "/v1/archive" not in source
+
+
+def test_guard_rejects_a_reanalysis_url() -> None:
+    with pytest.raises(ValueError, match="reanalysis"):
+        openmeteo._require_forecast_url("https://archive-api.open-meteo.com/v1/archive?x=1")
+
+
+def test_guard_accepts_the_forecast_url() -> None:
+    openmeteo._require_forecast_url(openmeteo.BASE_URL)
+
+
+def test_guard_rejects_a_plausible_but_wrong_host() -> None:
+    """The allowlist must reject every non-approved host, not just the one
+    reanalysis host we thought to deny -- this is the point of an allowlist
+    over a denylist, and a denylist would wave this one through."""
+    with pytest.raises(ValueError, match="only"):
+        openmeteo._require_forecast_url("https://api.open-meteo.com/v1/forecast?x=1")
+
+
+def test_parse_produces_utc_indexed_frame() -> None:
+    payload = {
+        "hourly": {
+            "time": ["2026-06-01T00:00", "2026-06-01T01:00"],
+            "wind_speed_100m": [12.0, 14.0],
+            "shortwave_radiation": [0.0, 5.0],
+            "temperature_2m": [11.0, 11.5],
+        }
+    }
+    df = openmeteo._parse(payload)
+    assert str(cast(pd.DatetimeIndex, df.index).tz) == "UTC"
+    assert list(df.columns) == ["wind_speed_100m", "shortwave_radiation", "temperature_2m"]
+    assert len(df) == 2
+
+
+@pytest.mark.integration
+def test_fetch_historical_forecast_returns_48_rows_for_two_day_range() -> None:
+    """Live network call, excluded by default. Run with `pytest -m integration`."""
+    df = openmeteo.fetch_historical_forecast(date(2026, 6, 1), date(2026, 6, 2))
+    assert df.shape == (48, 3)
+    assert str(cast(pd.DatetimeIndex, df.index).tz) == "UTC"
+
+
+# --- write_frame wiring (Finding 1): the fetcher must persist the parsed
+# frame to the Parquet cache, not just the raw response. The payload below is
+# SYNTHETIC -- hand-built to exercise the caching path, not a recorded
+# Open-Meteo response (R3).
+
+
+def test_fetch_historical_forecast_writes_to_parquet_cache(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = {
+        "hourly": {
+            "time": ["2026-06-01T00:00", "2026-06-01T01:00"],
+            "wind_speed_100m": [12.0, 14.0],
+            "shortwave_radiation": [0.0, 5.0],
+            "temperature_2m": [11.0, 11.5],
+        }
+    }
+    fake_response = _FakeResponse(payload, b"raw-bytes")
+    monkeypatch.setattr(httpx, "Client", lambda **kwargs: _FakeHttpxClient(fake_response))
+    monkeypatch.setattr(httpx, "HTTPTransport", lambda **kwargs: None)
+
+    out = openmeteo.fetch_historical_forecast(date(2026, 6, 1), date(2026, 6, 1))
+
+    cached = cache.read_frame(
+        "weather_forecast", datetime(2026, 6, 1, tzinfo=UTC), datetime(2026, 6, 2, tzinfo=UTC)
+    )
+    pd.testing.assert_frame_equal(cached, out)
+
+
+def test_fetch_historical_forecast_does_not_write_empty_partition(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R3: an empty partition on disk would read as 'we have data for this
+    month, and it is empty', which is not true -- we have no data at all."""
+    payload: dict[str, Any] = {
+        "hourly": {
+            "time": [],
+            "wind_speed_100m": [],
+            "shortwave_radiation": [],
+            "temperature_2m": [],
+        }
+    }
+    fake_response = _FakeResponse(payload, b"raw-bytes")
+    monkeypatch.setattr(httpx, "Client", lambda **kwargs: _FakeHttpxClient(fake_response))
+    monkeypatch.setattr(httpx, "HTTPTransport", lambda **kwargs: None)
+
+    openmeteo.fetch_historical_forecast(date(2026, 6, 1), date(2026, 6, 1))
+
+    assert list((cache.DATA_ROOT / "processed" / "weather_forecast").glob("*.parquet")) == []

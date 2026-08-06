@@ -359,6 +359,19 @@ This is strictly better than the withdrawn table: an empirically measured lag is
 primary evidence about the actual data, whereas even a correct documented figure
 would still need verifying against what the API returns.
 
+> **Update, 2026-08-06.** The Task 7 access spike found that TenneT's public
+> web pages and `api.tennet.eu` reject anonymous automated access (403 with
+> or without a JSON `Accept` header), confirming the earlier finding — **but**
+> `developer.tennet.eu` is a separate, registered-access API portal (200) that
+> lists a "Balance Delta High Res" API, among others, reachable behind a free
+> registration (name, email, privacy statement + fair use policy). The
+> measurement plan above is unchanged: the lag is still measured empirically,
+> not read off documentation. What changes is that a route to run the
+> measurement now exists, pending the repo owner registering. See
+> `docs/DATA_SOURCES.md` "TenneT access" for the full probe table and
+> `scripts/measure_balance_delta_lag.py` for the harness, which is complete
+> except for one function gated on the still-unseen API spec.
+
 #### 🔴 3 February 2026 — the regulation state changed meaning
 
 This is the most consequential thing found in this review, and it is not a
@@ -537,3 +550,13 @@ Ordered by how much damage a wrong answer does.
   token first.
 - Did **not** verify TenneT's own transparency pages directly: `tennet.eu`
   returned HTTP 403 to every automated fetch attempt.
+
+> **Update, 2026-08-06.** Incomplete as originally stated: 403 is confirmed
+> for `www.tennet.eu` and `api.tennet.eu` (public, anonymous access), but a
+> distinct registered-access developer portal at `developer.tennet.eu`
+> returns 200 and lists ten APIs, four of which matter here (balance delta
+> high-res, settlement prices, settled imbalance volumes, merit order list).
+> Registration is free (name, email, privacy statement + fair use policy) but
+> was **not** attempted in this pass — it requires the repo owner's identity
+> and agreement to legal terms, so it is the owner's action, not an automated
+> one. Full probe evidence: `docs/DATA_SOURCES.md` "TenneT access".

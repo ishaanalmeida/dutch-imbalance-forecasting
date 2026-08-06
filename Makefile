@@ -26,11 +26,14 @@ check: lint typecheck test
 
 # Phase 1+ targets. Each fails loudly until the phase that owns it is built,
 # so `make repro` can never silently skip a step and still report success.
+# Fetchers exist as importable modules (src/data/entsoe.py, openmeteo.py) but
+# have no CLI driver yet, and ENTSO-E needs a token. Fails loudly rather than
+# appearing to succeed.
 fetch:
-	@echo "TODO: Phase 1 not built yet" && exit 1
+	@echo "No fetch driver yet: fetchers are importable modules; ENTSOE_API_TOKEN also required" && exit 1
 
 features:
-	@echo "TODO: Phase 1 not built yet" && exit 1
+	@echo "TODO: Phase 2 not built yet (feature builder)" && exit 1
 
 train:
 	@echo "TODO: Phase 2 not built yet" && exit 1

@@ -193,3 +193,102 @@ too thin for walk-forward plus an untouched holdout (R2).
 broadcast T3 carries a step-function artefact that is a property of the MTU
 mismatch and not of the market. Segmentation is what keeps that honest; the
 segmented tables are the reported result, the pooled number is not.
+
+## ADR-009 — `rule: unresolved` always pairs with `lag_seconds: null`
+
+**Context.** Task 2 review found `publication.activated_balancing_volumes`
+carrying `rule: unresolved` next to `lag_seconds: 3600` — a live-looking
+number left over from before the field had a `rule` at all. It was safe only
+because `available_at()` (Task 3) dispatches on `rule` before touching
+`lag_seconds`. The moment any code path reads `lag_seconds` without checking
+`rule` first, it silently uses a made-up lag — the same hazard the `-1`
+sentinel refactor (this task) existed to remove, recurring at smaller scale.
+
+**Decision.** Any `publication` field with `rule: unresolved` must set
+`lag_seconds: null`. A placeholder number, however clearly labelled `assumed`
+in the neighbouring `confidence` field, is indistinguishable from a real
+measurement at the call site that only reads `lag_seconds`.
+`activated_balancing_volumes.lag_seconds` is now `null`; the note records that
+the prior `3600` was an unverified assumption, not a measurement, and has been
+removed for that reason.
+`test_unresolved_fields_carry_no_usable_lag` makes this structural: it fails
+if any future `unresolved` field is given a numeric `lag_seconds`.
+
+**Same reasoning as ADR-006.** `balance_delta` already established the
+pattern (`lag_seconds: null` until the lag is *measured*, not asserted). This
+ADR generalises it: it is not particular to balance delta, it is the rule for
+every `unresolved` publication field.
+
+## ADR-010 — `.gitignore`'s `data/` pattern was unanchored and silently shadowed `src/data/`
+
+**Context.** Found while committing Task 3 (`src/data/data_availability.py`).
+`.gitignore` line 2 read `data/` with no leading slash. Gitignore patterns
+without a `/` elsewhere in them match a directory of that name at *any* depth,
+not just at the repo root — so `data/` matched both the intended
+`<root>/data/` (raw-data cache, R7) **and** `src/data/`, an actual Python
+package. `git add` silently skips ignored paths unless forced, so this had
+already dropped `src/data/__init__.py` from every commit since Phase 0 with no
+error at any point (`git ls-files src/data/` showed only `timebase.py`, added
+via an unrecorded force-add). It was about to do the same to
+`data_availability.py` — the exact deliverable this rigour zone exists to
+protect — silently.
+
+**Decision.** Anchored the pattern to the repo root: `data/` → `/data/` (and
+the three `!data/.../.gitkeep` negations the same way). `src/data/__init__.py`
+restored to tracking in this commit. Documented the fix inline in
+`.gitignore` itself so a future edit doesn't casually strip the leading slash.
+
+**Separate finding, NOT fixed here (out of scope for Task 3).** Even after
+anchoring, `git ls-tree HEAD -- data/` shows none of `data/raw/.gitkeep`,
+`data/interim/.gitkeep`, `data/processed/.gitkeep` have ever been tracked.
+This is the classic gitignore limitation: a negation cannot re-include a file
+inside a directory that the parent pattern already excludes — `/data/`
+excludes the directories themselves, so git prunes them during traversal and
+never evaluates the per-file `!` rules inside. Fixing it needs `/data/*` +
+`!/data/raw/` (etc.) rather than `/data/` + `!/data/raw/.gitkeep`. Flagged for
+whoever next touches repo scaffolding; not fixed here to keep this task's diff
+scoped to what it was asked to deliver.
+
+**Why this belongs in the decision log and not a silent side-fix.** The whole
+point of Task 3 is refusing to silently do the wrong thing. A collision in the
+mechanism that decides what even reaches version control is the same failure
+class at the tooling layer, and deserved the same treatment: caught, explained,
+fixed where it blocked delivery, and disclosed rather than quietly patched.
+
+## ADR-011 — Closed the ADR-010 `.gitkeep` deferral; also wired `write_frame` into the fetchers
+
+**Context.** Final whole-branch review flagged the item ADR-010 explicitly
+deferred (`git ls-files data/` was empty; `git check-ignore -v
+data/raw/.gitkeep` showed the negation lines were dead), plus a real gap in
+the data layer: `cache.write_frame()` had no production caller.
+`src/data/entsoe.py` and `src/data/openmeteo.py` fetchers called `store_raw()`
+for the raw payload but never persisted the parsed frame, so
+`scripts/build_quality_report.py`'s `read_frame()` call had nothing to read
+once the ENTSO-E token arrives — a silent, undiagnosable empty report.
+
+**Decision, `.gitkeep`.** Implemented ADR-010's own proposed fix rather than
+the alternative (dropping the negations): `/data/*` + per-subdirectory
+`!/data/raw/` / `/data/raw/*` / `!/data/raw/.gitkeep` triplets, one per
+subdirectory. Verified both directions explicitly:
+`git check-ignore -v data/raw/.gitkeep` now reports *not* ignored (exit 1, no
+output) and `git check-ignore -v data/raw/anything.parquet` still reports
+ignored (via `/data/raw/*`, `*.parquet` as backstop) — R7 intact. The three
+`.gitkeep` files are added to tracking in this commit so a fresh clone gets
+the `data/` tree back.
+
+**Decision, `write_frame` wiring.** Each fetcher now calls `write_frame()`
+with a dataset name after `store_raw()`, not instead of it: `imbalance_prices`,
+`day_ahead_price`, `load_forecast`, `wind_solar_forecast` (entsoe.py),
+`weather_forecast` (openmeteo.py). An empty parsed frame is never written —
+writing an empty partition would read as "we have data for this month, and
+it's empty" when the true state is "we have no data at all" (R3). Covered by
+offline tests that monkeypatch the ENTSO-E client / `httpx` with hand-built,
+explicitly-labelled-synthetic payloads and assert the Parquet file appears
+under a `tmp_path`-monkeypatched `cache.DATA_ROOT` and round-trips, plus a
+counterpart test per module proving the empty-frame path writes nothing.
+
+**Also closed while in this file.** `read_frame()` now raises the same
+explicit `ValueError` as `write_frame()` on a naive `start`/`end`, instead of
+surfacing pandas' incidental `TypeError`. `cache.py`'s module docstring now
+states `load_raw` is the intended re-parse entry point and is not yet wired
+into any pipeline, rather than leaving that claim only implicit.

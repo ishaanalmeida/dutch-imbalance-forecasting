@@ -22,17 +22,29 @@ volatility roughly halved. Results spanning 2024-10-18 must be segmented, and a
 model fitted mostly on pre-PICASSO data will be miscalibrated on the tails that
 matter most for battery revenue.
 
-### The balance-delta publication lag is unknown and will be measured, not cited
+### The balance-delta publication lag is unmeasured pending registration
 The widely-repeated 3 → 5 → 2 minute *delay* timeline could not be substantiated
 against TenneT's own pages, which document only **cadence** changes (1/min →
 5/min → every 12 s) and describe an added delay as an option with "no concrete
 plans" as of 2025-10-28. The two were likely conflated in trade press.
 
-The lag is therefore `null` in config and Phase 1 measures it from the data.
-Until then no feature may be built from balance delta. If the measurement proves
-noisy or time-varying in a way we cannot pin down, every revenue figure inherits
-that uncertainty and it must be reported as a sensitivity, not hidden in a
-point estimate.
+A programmatic route to the data now exists: `developer.tennet.eu` hosts a
+registered-access API portal listing a "Balance Delta High Res" endpoint,
+reachable behind free registration (name, email, acceptance of the privacy
+statement and fair use policy). That registration requires the repo owner's
+identity and agreement to legal terms and has not been performed as part of
+this spike — see `docs/DATA_SOURCES.md` "TenneT access" for the full probe
+record. Until it is done, the endpoint path, auth mechanism, and response
+schema remain unseen, and `scripts/measure_balance_delta_lag.py` is built and
+ready to run but cannot execute past its single, clearly-marked
+`NotImplementedError`.
+
+The lag is therefore still `null` in config (`lag_confidence: unresolved`),
+and this is a *state*, not a dead end: Phase 1 measures it from the data once
+registered. Until then no feature may be built from balance delta. If the
+measurement proves noisy or time-varying in a way we cannot pin down, every
+revenue figure inherits that uncertainty and it must be reported as a
+sensitivity, not hidden in a point estimate.
 
 ### The regulation state changed meaning on 2026-02-03
 From 3 February 2026 TenneT determines the regulation state from the 12-second

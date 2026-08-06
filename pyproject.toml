@@ -10,6 +10,10 @@ requires-python = ">=3.11,<3.13"
 # Phase 0 needs only a YAML parser to read config/market_rules.yaml.
 dependencies = [
     "pyyaml==6.0.2",
+    "pandas==2.2.3",
+    "pyarrow==15.0.2",
+    "httpx==0.28.1",
+    "entsoe-py==0.8.0",
 ]
 
 [dependency-groups]
@@ -18,12 +22,16 @@ dev = [
     "ruff==0.9.2",
     "mypy==1.14.1",
     "types-pyyaml==6.0.12.20241230",
+    "pandas-stubs==2.2.2.240909",
 ]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
-addopts = "-q --strict-markers"
+addopts = "-q --strict-markers -m 'not integration'"
+markers = [
+    "integration: hits a live network API; excluded by default, run with -m integration",
+]
 
 [tool.ruff]
 line-length = 100
@@ -35,4 +43,4 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 [tool.mypy]
 python_version = "3.11"
 strict = true
-files = ["src", "tests"]
+files = ["src", "tests", "scripts"]

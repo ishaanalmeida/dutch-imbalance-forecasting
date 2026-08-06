@@ -1,0 +1,136 @@
+"""The Phase 1 gate (CLAUDE.md §3): prove no feature can be constructed from
+information published after its decision timestamp.
+
+RIGOUR ZONE. These tests are adversarial by design — each one attempts a leak
+that a plausible implementation would permit, and asserts refusal.
+"""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime, timedelta
+
+import pytest
+
+from src.data.data_availability import (
+    LookAheadError,
+    UnresolvedLagError,
+    assert_available,
+    available_at,
+    is_available,
+)
+from src.data.timebase import ISP_MINUTES
+from src.market import load_rules
+
+ISP = datetime(2026, 6, 17, 14, 30, tzinfo=UTC)
+DECISION = ISP  # CLAUDE.md ADR-005: decision is taken at ISP start
+
+
+def test_the_target_can_never_be_used_as_a_feature() -> None:
+    """The settled imbalance price is the TARGET. If this ever passes, the
+    entire project is measuring nothing."""
+    for field in ("imbalance_price_settled", "regulation_state"):
+        with pytest.raises(LookAheadError):
+            assert_available(field, ISP, DECISION)
+
+
+def test_no_field_is_available_before_the_period_it_describes_unless_declared() -> None:
+    """Only day-before-published fields may precede delivery. Anything else
+    claiming pre-delivery availability is a config error.
+
+    The real invariant is availability >= period END (start + ISP_MINUTES),
+    not just >= start: lag_after_period is measured from the period's end, so
+    a bare `>= ISP` bound would also pass an implementation that (wrongly)
+    measured lag from the period's START -- exactly the off-by-one this
+    file's other test targets directly, but this one would silently miss it
+    too if left at `>= ISP`."""
+    period_end = ISP + timedelta(minutes=ISP_MINUTES)
+    for field, spec in load_rules()["publication"].items():
+        if spec["rule"] == "unresolved":
+            continue
+        got = available_at(field, ISP)
+        if spec["rule"] != "published_day_before_at":
+            assert got >= period_end, f"{field} claims availability before its period ends"
+
+
+def test_same_isp_realtime_data_is_not_available_at_isp_start() -> None:
+    """A within-ISP estimate for ISP t cannot be known at the start of t."""
+    assert not is_available("imbalance_price_realtime_estimate", ISP, DECISION)
+
+
+def test_previous_isp_realtime_estimate_is_not_yet_available() -> None:
+    """ISP t-1 ends exactly at the decision instant, so its 2-minute-lagged
+    estimate publishes 2 minutes too late. The obvious feature is unusable."""
+    previous = ISP - timedelta(minutes=15)
+    assert not is_available("imbalance_price_realtime_estimate", previous, DECISION)
+
+
+def test_two_isps_back_realtime_estimate_is_available() -> None:
+    """ISP t-2 ends 15 minutes before the decision; its estimate publishes
+    13 minutes before. This is the true information frontier."""
+    two_back = ISP - timedelta(minutes=30)
+    assert is_available("imbalance_price_realtime_estimate", two_back, DECISION)
+
+
+def test_balance_delta_refuses_in_both_directions() -> None:
+    """Unresolved lag must block use, not merely warn — for any ISP, past or
+    present. ADR-006."""
+    for offset in (-timedelta(days=30), timedelta(0), timedelta(days=30)):
+        with pytest.raises(UnresolvedLagError):
+            is_available("balance_delta", ISP + offset, DECISION)
+
+
+def test_availability_is_monotonic_in_target_period() -> None:
+    """A later ISP can never become available earlier than an earlier one."""
+    fields = [
+        f for f, s in load_rules()["publication"].items() if s["rule"] != "unresolved"
+    ]
+    for field in fields:
+        earlier = available_at(field, ISP)
+        later = available_at(field, ISP + timedelta(hours=6))
+        assert later >= earlier, f"{field} availability went backwards in time"
+
+
+def test_a_deliberate_off_by_one_leak_is_caught() -> None:
+    """Classic bug: measuring lag from period START instead of period END.
+    For a 1-hour-lag field that mistake grants 15 free minutes."""
+    published = available_at("actual_generation", ISP)
+    naive_wrong = ISP + timedelta(hours=1)
+    assert published > naive_wrong
+    assert not is_available("actual_generation", ISP, naive_wrong)
+
+
+def test_unresolved_fields_never_yield_a_timestamp_whatever_lag_they_carry() -> None:
+    """available_at must dispatch on `rule` BEFORE reading `lag_seconds`. If it
+    ever reads the number first, a field whose lag is admittedly unknown would
+    silently produce a real-looking availability time."""
+    for field, spec in load_rules()["publication"].items():
+        if spec["rule"] == "unresolved":
+            with pytest.raises(UnresolvedLagError):
+                available_at(field, ISP)
+
+
+def test_rule_unresolved_wins_even_when_lag_seconds_is_present(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The test above doesn't actually discriminate rule-first dispatch from
+    lag-first dispatch: both real `unresolved` fields (balance_delta,
+    activated_balancing_volumes) carry `lag_seconds: null` today (ADR-009),
+    so a lag-first implementation would raise on the null check for the same
+    wrong reason and pass that test anyway. This poisons a spec with
+    `rule: unresolved` paired with a *numeric* lag_seconds -- the one case
+    that actually proves `rule` is checked before `lag_seconds` is ever
+    read, which is the claim ADR-009 relies on."""
+    monkeypatch.setattr(
+        "src.data.data_availability.load_rules",
+        lambda: {
+            "publication": {
+                "poisoned_field": {
+                    "rule": "unresolved",
+                    "lag_seconds": 60,
+                    "lag_confidence": "unresolved",
+                },
+            }
+        },
+    )
+    with pytest.raises(UnresolvedLagError):
+        available_at("poisoned_field", ISP)

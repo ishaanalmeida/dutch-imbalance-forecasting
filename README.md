@@ -5,13 +5,13 @@ state at 15-minute resolution, and battery dispatch optimised against the full
 predictive distribution — backtested under real settlement rules, real
 publication latency, and an explicit market-impact model.
 
-## Status: Phase 0 complete, awaiting review
+## Status: Phase 1 built, no data fetched yet
 
 | Phase | State |
 |---|---|
-| 0 — Domain verification | ✅ [`docs/DOMAIN_NOTES.md`](docs/DOMAIN_NOTES.md), [`config/market_rules.yaml`](config/market_rules.yaml) — **awaiting review** |
-| 1 — Data layer | ⬜ blocked on ENTSO-E API token |
-| 2 — Forecasting | ⬜ gated on Phase 0 review |
+| 0 — Domain verification | ✅ [`docs/DOMAIN_NOTES.md`](docs/DOMAIN_NOTES.md), [`config/market_rules.yaml`](config/market_rules.yaml) |
+| 1 — Data layer | ✅ built and tested — ⚠️ **no data fetched**: awaiting ENTSO-E token and TenneT registration |
+| 2 — Forecasting | ⬜ blocked on data |
 | 3 — Dispatch optimisation | ⬜ |
 | 4 — Backtest | ⬜ |
 | 5 — Demo | ⬜ |
@@ -23,15 +23,29 @@ code in this repo.
 
 ## What exists today
 
+**117 tests, `ruff` and `mypy --strict` clean, verified from a clean clone.**
+
+- **The no-look-ahead gate** ([`src/data/data_availability.py`](src/data/data_availability.py),
+  [`tests/test_no_lookahead.py`](tests/test_no_lookahead.py)). `available_at(field, isp)`
+  answers when a datum first became retrievable, and **refuses rather than guessing**
+  when a lag is unresolved. Mutation-tested: 13 deliberate breakages, including
+  `<`→`<=` and measuring lag from period start instead of period end.
 - **Settlement rules encoded and tested.** The regulation-state → price table
   from TenneT's *Imbalance Pricing System* **v6.1 (21 Oct 2024)**, including dual
   pricing in state 2 and the reverse-pricing mid-price correction, lives in
   [`config/market_rules.yaml`](config/market_rules.yaml) as executable config.
-  [`src/market.py`](src/market.py) resolves it; 23 tests in
-  [`tests/test_settlement.py`](tests/test_settlement.py) check it against
-  hand-worked examples and a sign-convention property test.
+  [`src/market.py`](src/market.py) resolves it rather than restating it.
+- **DST-correct time base** — the 23-hour and 25-hour Amsterdam days are asserted
+  explicitly (92 and 100 ISPs), because a naive 96-per-day assumption fails
+  silently twice a year.
+- **Fetchers** for ENTSO-E and Open-Meteo, writing through a raw-response store
+  and a month-partitioned Parquet cache. The weather fetcher enforces an
+  **allowlist** on the endpoint so ERA5 reanalysis can never be used as a feature.
 - **Publication lags catalogued** per series, each confidence-tagged, with the
   one unresolved lag left `null` rather than guessed — see Limitations.
+
+**Not yet built:** feature builder, models, backtest, optimisation, demo (Phases 2–5).
+No CI workflow yet.
 
 ## Limitations
 
