@@ -45,6 +45,14 @@ def test_guard_accepts_the_forecast_url() -> None:
     openmeteo._require_forecast_url(openmeteo.BASE_URL)
 
 
+def test_guard_rejects_a_plausible_but_wrong_host() -> None:
+    """The allowlist must reject every non-approved host, not just the one
+    reanalysis host we thought to deny -- this is the point of an allowlist
+    over a denylist, and a denylist would wave this one through."""
+    with pytest.raises(ValueError, match="only"):
+        openmeteo._require_forecast_url("https://api.open-meteo.com/v1/forecast?x=1")
+
+
 def test_parse_produces_utc_indexed_frame() -> None:
     payload = {
         "hourly": {

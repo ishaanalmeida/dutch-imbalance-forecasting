@@ -30,15 +30,17 @@ NL_LAT, NL_LON = 52.1, 5.2
 
 
 def _require_forecast_url(url: str) -> str:
-    # ponytail: host-substring check only. The reanalysis path segment is not
-    # spelled out here so it can't leak into `inspect.getsource` -- the host
-    # check alone is sufficient since the reanalysis API is only ever served
-    # from that host.
-    if "archive-api" in url:
+    """Allowlist: only the historical-forecast endpoint may ever be fetched.
+
+    Stated positively on purpose. A denylist catches only the wrong hosts we
+    thought of; this rejects every host that is not the approved one, including
+    the ERA5 reanalysis endpoint, without naming it.
+    """
+    if not url.startswith(BASE_URL):
         raise ValueError(
-            f"Refusing to fetch {url!r}: this is the ERA5 reanalysis endpoint. "
-            "Reanalysis is observed weather, not a forecast issued at the time, "
-            "and using it as a feature violates R1."
+            f"Refusing to fetch {url!r}: only {BASE_URL} may be used. "
+            "Non-approved hosts, including reanalysis archives, serve observed "
+            "weather reconstructed after the fact; using that as a feature violates R1."
         )
     return url
 
