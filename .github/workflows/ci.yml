@@ -67,6 +67,23 @@ jobs:
           fi
           echo "OK: nothing under data/ is committable."
 
+      # The mirror image of the R7 check. A global *.parquet rule silently
+      # swallowed the entire vintage log once — the same failure mode as the
+      # unanchored data/ rule that shadowed src/data/. An ignore rule that
+      # eats the deliverable is as damaging as one that leaks data.
+      - name: The vintage log must remain committable
+        run: |
+          set -euo pipefail
+          mkdir -p vintage_log/_probe
+          touch vintage_log/_probe/2026-01.parquet
+          if [ -z "$(git add -An vintage_log/_probe 2>/dev/null)" ]; then
+            echo "::error::vintage_log is ignored — the track record would never be committed."
+            git check-ignore -v vintage_log/_probe/2026-01.parquet || true
+            exit 1
+          fi
+          rm -rf vintage_log/_probe
+          echo "OK: vintage_log is committable."
+
       - name: R8 — no secrets committed
         run: |
           set -euo pipefail
