@@ -515,3 +515,68 @@ seconds — 12 requests/minute, over TenneT's 10/min cap, which their docs say
 "may result in temporary blocking of your API keys". It now follows TenneT's
 recommended five-per-minute schedule and counts requests per minute against the
 cap. A test pins the cadence so nobody "optimises" it back over the limit.
+
+## ADR-018 — the balance-delta feed carries the settlement component prices
+
+**Discovered by probing the live API, 2026-08-07.** Each 12-second point in
+`balance-delta-high-res` carries, alongside the power decomposition:
+
+| Field | Settlement meaning |
+|---|---|
+| `max_upw_regulation_price` | `p_up` — highest activated upward price |
+| `min_downw_regulation_price` | `p_down` — lowest activated downward price |
+| `mid_price` | `p_mid` — the mid-price |
+
+Those are exactly the three inputs to `src/market.py: imbalance_prices()`.
+
+**Consequence.** The imbalance price for an ISP can be computed in **near-real
+time** from this feed via the settlement rules, instead of waiting for the
+settled publication at D+1 10:00. That is a materially different information
+position from the one Phase 0 assumed, and it is the natural input to a live
+forecast/dispatch loop.
+
+`null` is meaningful, not missing: `max_upw_regulation_price` is null when no
+upward regulation is active. `imbalance_prices()` already accepts `None` for a
+component its state's rule does not reference, so the two fit together without
+special-casing.
+
+The same points also decompose the balance delta by mechanism —
+`power_{afrr,igcc,mfrrda,picasso,mari}_{in,out}` — which makes PICASSO and IGCC
+exchange directly observable rather than inferred (cf. ADR-015 on PICASSO's
+effect on the price distribution).
+
+**Not yet exploited.** This is recorded now because it changes what Phase 2 can
+build; no feature depends on it until the lag is measured and the field stops
+being refused.
+
+## ADR-019 — the lag harness must discard its first response
+
+**A bug caught by running it, not by reading it.** Each `/latest` response
+carries the most recent ~30 minutes — about 150 points. On the first call every
+one is unseen, so a naive loop records ~150 "new" observations whose apparent
+lag ranges up to 30 minutes, because almost all were published long before we
+started watching. That would have dominated the sample and wrecked the p95 —
+in the **permissive** direction if it had gone the other way, and in any case
+producing a confidently wrong number.
+
+**Fix.** The first response seeds the seen-set only; no samples are emitted
+from it. Only points appearing in a *later* response were published while we
+were watching.
+
+**Residual bias, stated.** We poll every 12 s, so a point can sit published for
+up to one poll interval before we notice: measured lags are biased **up** by
+0–12 s. That is the conservative direction for R1 — it can never make data look
+available earlier than it was — and small against a lag of order two minutes.
+Reported, not hidden.
+
+**Validation run (6 min, 30 samples, 2026-08-07 ~12:15 UTC):** median 133.6 s,
+p95 134.0 s, max 134.0 s. Exactly one new point per 12-second poll, so the
+poll schedule and the feed are in lockstep.
+
+**Deliberately NOT written to config yet.** Six minutes spans less than one
+ISP and one time of day. The distribution is strikingly tight, which suggests a
+deterministic configured delay rather than a noisy one — but ADR-017 established
+that TenneT can reconfigure it, and a value measured at midday is not evidence
+about 03:00. The field stays `unresolved` until a run of at least two hours.
+Writing a plausible number early is precisely the failure this project is built
+to avoid.

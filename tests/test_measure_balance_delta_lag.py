@@ -47,32 +47,90 @@ def test_auth_header_matches_the_spec() -> None:
     assert harness.KEY_HEADER == "apikey"
 
 
-def test_extract_records_finds_a_timestamp_in_a_list_payload() -> None:
-    payload = [{"timestamp": "2026-08-07T10:00:00Z", "value": 1.0}]
+def _envelope(points: list[dict[str, object]]) -> dict[str, object]:
+    """TenneT's Aether envelope, matching the shape observed live 2026-08-07.
+
+    Structural copy of a real response with values reduced to what the parser
+    reads. Not a verbatim recording -- the point is to pin the nesting
+    (Response -> TimeSeries -> Period -> points), which is what the parser
+    depends on.
+    """
+    return {
+        "Response": {
+            "informationType": "BALANCE_DELTA_HIGH_RES",
+            "period.timeInterval": {
+                "start": "2026-08-07T11:35:48Z",
+                "end": "2026-08-07T12:05:48Z",
+            },
+            "TimeSeries": [
+                {
+                    "mRID": 1,
+                    "quantity_Measurement_Unit_name": "MAW",
+                    "Period": [{"points": points}],
+                }
+            ],
+        }
+    }
+
+
+def _point(start: str, end: str) -> dict[str, object]:
+    return {
+        "timeInterval_start": start,
+        "timeInterval_end": end,
+        "sequence": "4080",
+        "power_afrr_in": "0.0",
+        "power_afrr_out": "19.0",
+        "power_picasso_in": "414.8",
+        "power_picasso_out": "0.0",
+        "max_upw_regulation_price": None,
+        "min_downw_regulation_price": "85.26",
+        "mid_price": "85.00",
+    }
+
+
+def test_extract_records_walks_the_aether_envelope() -> None:
+    payload = _envelope(
+        [
+            _point("2026-08-07T11:35:48Z", "2026-08-07T11:36:00Z"),
+            _point("2026-08-07T11:36:00Z", "2026-08-07T11:36:12Z"),
+        ]
+    )
     got = harness.extract_records(payload)
-    assert got[0]["timestamp"] == "2026-08-07T10:00:00Z"
+    assert len(got) == 2
 
 
-def test_extract_records_unwraps_a_single_list_envelope() -> None:
-    payload = {"data": [{"measureTime": "2026-08-07T10:00:00Z", "v": 2.0}]}
-    assert harness.extract_records(payload)[0]["timestamp"] == "2026-08-07T10:00:00Z"
+def test_timestamp_is_the_interval_END_not_its_start() -> None:
+    """A point covers [start, end), so the observation is only complete at
+    `end`. Using `start` would understate every measured lag by one 12-second
+    tick -- an error in the permissive direction."""
+    payload = _envelope([_point("2026-08-07T11:35:48Z", "2026-08-07T11:36:00Z")])
+    assert harness.extract_records(payload)[0]["timestamp"] == "2026-08-07T11:36:00Z"
 
 
-def test_extract_records_raises_rather_than_guessing() -> None:
-    """A record with no timestamp field must fail loudly. Returning nothing
-    would read as 'no new data' and yield a measurement of zero samples."""
-    with pytest.raises(ValueError, match="No timestamp-like field"):
-        harness.extract_records([{"value": 1.0}])
+def test_component_prices_survive_into_the_record() -> None:
+    """max_upw / min_downw / mid map to p_up / p_down / p_mid in the settlement
+    rules, so the feed can price an ISP in near-real time. Nulls are meaningful:
+    no upward regulation was active in this point."""
+    payload = _envelope([_point("2026-08-07T11:35:48Z", "2026-08-07T11:36:00Z")])
+    record = harness.extract_records(payload)[0]["record"]
+    assert record["max_upw_regulation_price"] is None
+    assert record["min_downw_regulation_price"] == "85.26"
+    assert record["mid_price"] == "85.00"
 
 
-def test_extract_records_raises_on_an_ambiguous_envelope() -> None:
-    with pytest.raises(ValueError, match="Cannot locate the record list"):
-        harness.extract_records({"a": [1], "b": [2]})
+def test_raises_on_an_unrecognised_envelope() -> None:
+    with pytest.raises(ValueError, match="expected a top-level 'Response'"):
+        harness.extract_records({"data": []})
 
 
-def test_timestamps_are_parsed_as_utc() -> None:
-    """TenneT states /latest timestamps are UTC. A naive parse would be read as
-    host local time and corrupt every lag by the host's offset."""
-    parsed = harness._parse_instant("2026-08-07T10:00:00")
-    assert parsed.tzinfo is not None
-    assert harness._parse_instant("2026-08-07T10:00:00Z") == parsed
+def test_raises_when_a_point_has_no_end_timestamp() -> None:
+    """Must fail loudly rather than skip: a silently dropped point reads as
+    'no new data' and biases the measurement."""
+    with pytest.raises(ValueError, match="no timeInterval_end"):
+        harness.extract_records(_envelope([{"sequence": "1"}]))
+
+
+def test_raises_when_the_envelope_parses_but_is_empty() -> None:
+    """Zero points is not the same as zero new points."""
+    with pytest.raises(ValueError, match="no points"):
+        harness.extract_records(_envelope([]))

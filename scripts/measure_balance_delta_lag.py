@@ -37,12 +37,22 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import httpx
+
+# Runnable as `python scripts/measure_balance_delta_lag.py` as well as
+# `python -m scripts.measure_balance_delta_lag`. The former does not put the
+# repo root on sys.path (pythonpath in pyproject.toml is a pytest setting, not
+# a runtime one), so `from src.env import ...` would fail. Fix it here rather
+# than making the operator remember which invocation works.
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 OUT = Path(__file__).resolve().parents[1] / "data" / "interim" / "balance_delta_lag_samples.jsonl"
 
@@ -98,47 +108,52 @@ def fetch_latest_balance_delta(timeout: float = 30.0) -> dict[str, Any]:
 
 
 def extract_records(payload: Any) -> list[dict[str, Any]]:
-    """Pull observations out of the payload, each needing a timestamp field.
+    """Pull the 12-second observations out of TenneT's Aether envelope.
 
-    Handles the common envelope shapes (bare list, or a list under a single
-    obvious key) and searches each record for a plausible timestamp field.
-    Raises with the actual payload shape if it cannot find one, rather than
-    returning nothing -- an empty result would look like "no new data" and
-    silently produce a lag measurement of zero samples.
+    Schema confirmed live 2026-08-07:
+
+        Response
+          informationType: "BALANCE_DELTA_HIGH_RES"
+          period.timeInterval: {start, end}      # the ~30-minute window
+          TimeSeries[]
+            Period[]
+              points[]                           # one per 12 seconds
+                timeInterval_start / timeInterval_end
+                sequence
+                power_{afrr,igcc,mfrrda,picasso,mari}_{in,out}
+                max_upw_regulation_price         # p_up   (null when no upward)
+                min_downw_regulation_price       # p_down (null when no downward)
+                mid_price                        # p_mid
+
+    Each point's `timestamp` is its **timeInterval_end**: the point covers
+    [start, end), so the observation is only complete at `end`. Using `start`
+    would overstate the measured lag by one 12-second tick.
+
+    Raises on an unrecognised envelope rather than returning nothing -- an
+    empty result reads as "no new data" and would silently yield a lag
+    measurement of zero samples.
     """
-    records: list[Any]
-    if isinstance(payload, list):
-        records = payload
-    elif isinstance(payload, dict):
-        lists = [v for v in payload.values() if isinstance(v, list)]
-        if len(lists) != 1:
-            raise ValueError(
-                f"Cannot locate the record list in the response. Top-level keys: "
-                f"{sorted(payload)}. Run --probe and update extract_records()."
-            )
-        records = lists[0]
-    else:
-        raise ValueError(f"Unexpected payload type {type(payload).__name__}. Run --probe.")
+    if not isinstance(payload, dict) or "Response" not in payload:
+        raise ValueError(
+            f"Unexpected envelope; expected a top-level 'Response'. "
+            f"Got: {sorted(payload) if isinstance(payload, dict) else type(payload).__name__}"
+        )
+    response = payload["Response"]
 
     out: list[dict[str, Any]] = []
-    for record in records:
-        if not isinstance(record, dict):
-            continue
-        stamp = next(
-            (
-                str(v)
-                for k, v in record.items()
-                if any(t in k.lower() for t in ("time", "stamp", "date", "period"))
-                and isinstance(v, str)
-            ),
-            None,
+    for series in response.get("TimeSeries", []) or []:
+        for period in series.get("Period", []) or []:
+            for point in period.get("points", []) or []:
+                stamp = point.get("timeInterval_end")
+                if not stamp:
+                    raise ValueError(f"point has no timeInterval_end. Keys: {sorted(point)}")
+                out.append({"timestamp": str(stamp), "record": point})
+
+    if not out:
+        raise ValueError(
+            "Envelope parsed but contained no points. Window: "
+            f"{response.get('period.timeInterval')}"
         )
-        if stamp is None:
-            raise ValueError(
-                f"No timestamp-like field in record. Keys: {sorted(record)}. "
-                f"Run --probe and update extract_records()."
-            )
-        out.append({"timestamp": stamp, "record": record})
     return out
 
 
@@ -169,17 +184,36 @@ def probe() -> int:
 
 
 def poll(minutes: int) -> int:
+    """Poll `/latest` and record, for each newly published point, how long
+    after the instant it describes we could first see it.
+
+    WARM-UP MATTERS. Each response carries the most recent ~30 minutes, i.e.
+    ~150 points. On the very first call every one of those is "new" to us, but
+    almost all were published long before we started looking -- their apparent
+    lag would range up to 30 minutes and would wreck the p95. So the first
+    response is used ONLY to seed the seen-set; no samples are emitted from it.
+    Only points that appear in a LATER response were genuinely published while
+    we were watching.
+
+    Residual measurement noise: we poll every ~12 s, so a point can sit
+    published for up to one poll interval before we notice. Measured lags are
+    therefore biased UP by 0..12 s. That is the conservative direction for R1
+    (it never makes data look available earlier than it was), and it is small
+    against a lag of order two minutes -- but it is reported, not hidden.
+    """
     OUT.parent.mkdir(parents=True, exist_ok=True)
     deadline = time.time() + minutes * 60
     seen: set[str] = set()
     written = 0
+    warmed_up = False
     requests_this_minute = 0
     minute_mark = int(time.time() // 60)
 
     print(f"polling {LATEST_PATH} at seconds {POLL_OFFSETS} of each minute -> {OUT}")
+    print("first response is warm-up only (its backlog was published before we looked)")
+
     while time.time() < deadline:
         now = datetime.now(UTC)
-        # Sleep until the next recommended offset.
         target = next((o for o in POLL_OFFSETS if o > now.second), None)
         time.sleep((target - now.second) if target else (60 - now.second + POLL_OFFSETS[0]))
 
@@ -194,11 +228,23 @@ def poll(minutes: int) -> int:
             payload = fetch_latest_balance_delta()
             requests_this_minute += 1
         except httpx.HTTPError as exc:
-            print(f"  request failed: {exc}")
+            print(f"\n  request failed: {exc}")
+            continue
+
+        try:
+            records = extract_records(payload)
+        except ValueError as exc:
+            print(f"\n  unparseable response: {exc}")
+            continue
+
+        if not warmed_up:
+            seen.update(r["timestamp"] for r in records)
+            warmed_up = True
+            print(f"  warm-up: {len(seen)} existing points ignored")
             continue
 
         with OUT.open("a", encoding="utf-8") as fh:
-            for item in extract_records(payload):
+            for item in records:
                 stamp = item["timestamp"]
                 if stamp in seen:
                     continue
