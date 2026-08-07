@@ -1,0 +1,50 @@
+# CLAUDE.md §10. Install once with:  uv run pre-commit install
+#
+# Deliberately fast: lint, format, type-check and the hygiene hooks run here.
+# The full pytest suite does NOT run on commit — it belongs in CI, and a slow
+# pre-commit hook is a hook people start bypassing with --no-verify.
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.9.2 # keep in sync with the ruff pin in pyproject.toml
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-yaml
+      - id: check-toml
+      - id: check-added-large-files
+        args: [--maxkb=512]
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-merge-conflict
+      - id: mixed-line-ending
+        args: [--fix=lf]
+      # R8: block committing a real .env or anything that looks like a key.
+      - id: detect-private-key
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.14.1 # keep in sync with the mypy pin in pyproject.toml
+    hooks:
+      - id: mypy
+        # Run against the repo config rather than per-file, so strict settings
+        # and the `files` list in pyproject.toml apply.
+        pass_filenames: false
+        args: [--config-file=pyproject.toml]
+        additional_dependencies:
+          - pandas-stubs==2.2.2.240909
+          - types-pyyaml==6.0.12.20241230
+
+  - repo: local
+    hooks:
+      # This repo has already shipped one ignore rule that silently made source
+      # files uncommittable. Cheap to check, expensive to miss.
+      - id: no-untracked-source
+        name: every source file is tracked by git
+        entry: python scripts/check_sources_tracked.py
+        language: system
+        pass_filenames: false

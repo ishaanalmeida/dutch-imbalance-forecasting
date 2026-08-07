@@ -21,6 +21,7 @@ P_UP, P_DOWN, P_MID = 120.0, -15.0, 30.0
 
 # --- Table 2: price selection per regulation state --------------------------
 
+
 @pytest.mark.parametrize(
     ("state", "expected_long", "expected_short", "why"),
     [
@@ -75,6 +76,7 @@ def test_dual_price_never_favours_the_brp() -> None:
 
 # --- Table 2: direction of payment ------------------------------------------
 
+
 @pytest.mark.parametrize(
     ("state", "e_surplus", "e_shortage", "expected_cash", "table_2_row"),
     [
@@ -112,6 +114,7 @@ def test_state_2_penalises_a_battery_in_both_directions() -> None:
 
 # --- Failure modes: the rule table must refuse rather than guess -------------
 
+
 def test_unknown_regulation_state_raises() -> None:
     with pytest.raises(KeyError, match="Unknown regulation state"):
         imbalance_prices(99, P_UP, P_DOWN, P_MID)
@@ -134,6 +137,7 @@ def test_negative_energy_magnitude_raises() -> None:
 
 
 # --- The config is the source of truth --------------------------------------
+
 
 def test_rule_table_covers_exactly_the_documented_regulation_states() -> None:
     rules = load_rules()

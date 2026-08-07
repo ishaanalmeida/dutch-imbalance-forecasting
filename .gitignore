@@ -35,3 +35,10 @@ __pycache__/
 .mypy_cache/
 mlruns/
 *.parquet
+
+# ...but the vintage log IS the deliverable: it is our own forecast captures,
+# recorded with the instant they were observed, and it must survive a clean
+# checkout. It lives outside data/ precisely so it can be committed.
+# The global *.parquet rule above silently swallowed it once already - the same
+# failure mode as the unanchored data/ rule that shadowed src/data/.
+!vintage_log/**/*.parquet

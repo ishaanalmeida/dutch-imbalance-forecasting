@@ -7,7 +7,7 @@
 
 UV := uv
 
-.PHONY: install test lint typecheck check fetch features train backtest report repro serve
+.PHONY: install test lint typecheck check fetch features train backtest report repro serve log-vintage hooks status availability
 
 install:
 	$(UV) sync
@@ -23,6 +23,22 @@ typecheck:
 	$(UV) run mypy
 
 check: lint typecheck test
+
+hooks:
+	$(UV) run pre-commit install
+
+# One-screen view of what is built, what is blocked, and why.
+status:
+	$(UV) run python -m src.cli status
+
+# The R1 gate made visible for the current ISP.
+availability:
+	$(UV) run python -m src.cli availability
+
+# CLAUDE.md 7: accrues value with wall-clock time and nothing else does.
+# Needs no credentials. Also runs on a 6-hourly cron in CI.
+log-vintage:
+	$(UV) run python -m src.jobs.log_weather_vintage --forecast-days 7
 
 # Phase 1+ targets. Each fails loudly until the phase that owns it is built,
 # so `make repro` can never silently skip a step and still report success.

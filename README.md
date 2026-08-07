@@ -44,8 +44,32 @@ code in this repo.
 - **Publication lags catalogued** per series, each confidence-tagged, with the
   one unresolved lag left `null` rather than guessed — see Limitations.
 
+- **An append-only vintage log** ([`src/data/vintage.py`](src/data/vintage.py)) and a
+  scheduled job that records what the forecast said, when it said it. Nothing is
+  ever overwritten, so `latest_as_of()` reconstructs exactly what was visible
+  strictly before any instant — and the difference between two vintages is the
+  forecast-error proxy. **This is the only artefact that cannot be back-filled**,
+  which is why it runs before a model exists.
+- **CI** enforcing lint, `mypy --strict`, tests, and three repository-level
+  invariants: nothing under `data/` may become committable (R7), `.env` is never
+  tracked (R8), and every source file on disk is tracked by git.
+
 **Not yet built:** feature builder, models, backtest, optimisation, demo (Phases 2–5).
-No CI workflow yet.
+
+## Try it
+
+```bash
+uv run python -m src.cli status         # what is built, what is blocked, why
+uv run python -m src.cli availability   # the no-look-ahead gate, for the current ISP
+uv run python -m src.cli settle         # the settlement table on a worked example
+uv run python -m src.cli log-vintage    # record the current forecast
+uv run python -m src.cli track-record   # what has accumulated so far
+uv run python -m src.cli reparse        # rebuild the cache from raw, no refetch
+```
+
+`availability` is the one worth looking at: it prints, per field, when the datum
+became retrievable and whether it is usable at the decision instant — including
+why `balance_delta` is *refused* rather than guessed.
 
 ## Limitations
 

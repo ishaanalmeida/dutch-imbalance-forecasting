@@ -1,0 +1,76 @@
+name: Log forecast vintage
+
+# CLAUDE.md §7: "logs the forecast at the time it was made, so that after a few
+# weeks you have a genuine, unfalsifiable out-of-sample track record. Start this
+# job as early as possible in the project; it accrues value with wall-clock time
+# and nothing else does."
+#
+# This is the earliest runnable piece: Open-Meteo needs no credentials. Each run
+# records what the forecast said at that moment and commits it. Vintages are
+# never overwritten, so the revision history — the forecast-error proxy §4 wants
+# — accumulates automatically.
+#
+# The commits are the evidence. A record written by a scheduled run, with the
+# run's own timestamp, cannot be back-fitted later.
+
+on:
+  schedule:
+    # Every 6 hours. Open-Meteo refreshes roughly hourly, but 4x/day is enough
+    # to capture the vintage structure that matters and keeps the log small.
+    - cron: "7 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  # Never let two runs race on the same commit.
+  group: log-vintage
+  cancel-in-progress: false
+
+jobs:
+  log:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Sync dependencies
+        run: uv sync --locked --dev
+
+      - name: Record the current forecast vintage
+        run: uv run python -m src.jobs.log_weather_vintage --forecast-days 7
+
+      - name: Commit the vintage if it changed
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Only the vintage log. Never data/ — R7.
+          git add vintage_log/
+          if git diff --cached --quiet; then
+            echo "No new vintage rows (forecast unchanged since last run)."
+            exit 0
+          fi
+          git commit -m "chore(vintage): weather forecast as of $(date -u +%Y-%m-%dT%H:%MZ)"
+
+          # The scheduled run may race a push; rebase and retry once.
+          git pull --rebase --autostash origin "${GITHUB_REF_NAME}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+
+      - name: Guard — nothing under data/ was committed (R7)
+        if: always()
+        run: |
+          set -euo pipefail
+          if git log --name-only --pretty=format: -1 | grep -q '^data/'; then
+            echo "::error::A commit touched data/ — R7 violation."
+            exit 1
+          fi
+          echo "OK: no data/ paths in the last commit."

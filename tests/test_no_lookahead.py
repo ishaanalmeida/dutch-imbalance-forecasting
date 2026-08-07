@@ -81,9 +81,7 @@ def test_balance_delta_refuses_in_both_directions() -> None:
 
 def test_availability_is_monotonic_in_target_period() -> None:
     """A later ISP can never become available earlier than an earlier one."""
-    fields = [
-        f for f, s in load_rules()["publication"].items() if s["rule"] != "unresolved"
-    ]
+    fields = [f for f, s in load_rules()["publication"].items() if s["rule"] != "unresolved"]
     for field in fields:
         earlier = available_at(field, ISP)
         later = available_at(field, ISP + timedelta(hours=6))

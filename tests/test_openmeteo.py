@@ -76,16 +76,41 @@ def test_guard_rejects_a_reanalysis_url() -> None:
         openmeteo._require_forecast_url("https://archive-api.open-meteo.com/v1/archive?x=1")
 
 
-def test_guard_accepts_the_forecast_url() -> None:
+def test_guard_accepts_both_approved_forecast_urls() -> None:
+    """Two endpoints are approved: the historical-forecast archive (past
+    forecasts as issued, for training history) and the live forecast endpoint
+    (forward forecasts, for the vintage-logging job).
+
+    The live endpoint was added deliberately after this guard was first written.
+    R1's weather clause forbids *reanalysis* -- weather reconstructed after the
+    fact -- not forecasts about the future. A forward forecast issued now and
+    recorded with its issue time is exactly what the track record needs.
+    """
     openmeteo._require_forecast_url(openmeteo.BASE_URL)
+    openmeteo._require_forecast_url(openmeteo.LIVE_FORECAST_URL)
 
 
 def test_guard_rejects_a_plausible_but_wrong_host() -> None:
     """The allowlist must reject every non-approved host, not just the one
     reanalysis host we thought to deny -- this is the point of an allowlist
-    over a denylist, and a denylist would wave this one through."""
-    with pytest.raises(ValueError, match="only"):
-        openmeteo._require_forecast_url("https://api.open-meteo.com/v1/forecast?x=1")
+    over a denylist, and a denylist would wave these through."""
+    for url in (
+        "https://open-meteo.com/v1/forecast",
+        "https://api.open-meteo.com/v1/elevation",
+        "https://evil.example.com/v1/forecast",
+        "http://api.open-meteo.com/v1/forecast",  # not https
+    ):
+        with pytest.raises(ValueError, match="only"):
+            openmeteo._require_forecast_url(url)
+
+
+def test_no_reanalysis_endpoint_is_on_the_allowlist() -> None:
+    """Whatever else the allowlist grows to hold, it must never hold an archive."""
+    assert all("archive" not in url for url in openmeteo._ALLOWED_URLS)
+    assert len(openmeteo._ALLOWED_URLS) == 2, (
+        "the allowlist changed size -- every entry must be a forecast endpoint, "
+        "and adding one is a deliberate R1 decision, not a convenience"
+    )
 
 
 def test_parse_produces_utc_indexed_frame() -> None:
