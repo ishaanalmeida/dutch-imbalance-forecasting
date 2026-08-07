@@ -164,9 +164,7 @@ def test_regulation_state_distribution_by_month_sums_to_one_per_group() -> None:
     idx = list(pd.date_range("2026-06-28", periods=4, freq="1D", tz="UTC")) + list(
         pd.date_range("2026-07-01", periods=4, freq="1D", tz="UTC")
     )
-    df = pd.DataFrame(
-        {"regulation_state": [0, 1, -1, 2, 0, 0, 1, 1]}, index=pd.DatetimeIndex(idx)
-    )
+    df = pd.DataFrame({"regulation_state": [0, 1, -1, 2, 0, 0, 1, 1]}, index=pd.DatetimeIndex(idx))
     dist = regulation_state_distribution(df, by="month")
     assert len(dist) == 2
     for _, row in dist.iterrows():
@@ -211,9 +209,7 @@ def _stub_breaks(monkeypatch: pytest.MonkeyPatch, breaks: list[dict[str, object]
     """structural_break_check does `from src.market import load_rules` inside
     the function body, so patching the src.market module attribute is picked
     up on every call regardless of lru_cache on the real load_rules."""
-    monkeypatch.setattr(
-        "src.market.load_rules", lambda: {"structural_breaks": breaks}
-    )
+    monkeypatch.setattr("src.market.load_rules", lambda: {"structural_breaks": breaks})
 
 
 def test_structural_break_check_computes_state2_share_before_and_after(

@@ -73,9 +73,7 @@ ISP = datetime(2026, 6, 17, 14, 30, tzinfo=UTC)
 def test_lag_after_period_is_measured_from_period_end() -> None:
     """actual_generation: 1h after the period ENDS, not after it starts.
     ISP 14:30-14:45 UTC therefore becomes available at 15:45 UTC."""
-    assert available_at("actual_generation", ISP) == datetime(
-        2026, 6, 17, 15, 45, tzinfo=UTC
-    )
+    assert available_at("actual_generation", ISP) == datetime(2026, 6, 17, 15, 45, tzinfo=UTC)
 
 
 def test_day_ahead_price_is_available_the_previous_afternoon() -> None:

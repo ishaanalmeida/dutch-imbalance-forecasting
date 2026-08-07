@@ -64,9 +64,7 @@ def duplicate_report(df: pd.DataFrame) -> pd.DataFrame:
     """Every timestamp that appears more than once in the index, with its
     repeat count."""
     dupes = df.index[df.index.duplicated(keep=False)].unique()
-    return pd.DataFrame(
-        {"timestamp": dupes, "count": [int((df.index == t).sum()) for t in dupes]}
-    )
+    return pd.DataFrame({"timestamp": dupes, "count": [int((df.index == t).sum()) for t in dupes]})
 
 
 def regulation_state_distribution(df: pd.DataFrame, by: str = "hour") -> pd.DataFrame:

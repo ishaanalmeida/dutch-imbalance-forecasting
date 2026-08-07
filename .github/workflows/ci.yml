@@ -1,0 +1,106 @@
+name: CI
+
+# CLAUDE.md §10: lint, type-check, test on every push.
+# The look-ahead gate is only a guarantee if something enforces it on every
+# commit. Without this workflow the guarantee decays the first time someone
+# pushes in a hurry.
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Never let CI reach the network for market data. Integration tests are
+  # excluded by pytest's default addopts; this makes the absence explicit.
+  ENTSOE_API_TOKEN: ""
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Pin Python
+        run: uv python install
+
+      - name: Sync dependencies (locked — fails if uv.lock is stale)
+        run: uv sync --locked --all-extras --dev
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Format check
+        run: uv run ruff format --check .
+
+      - name: Type-check (strict)
+        run: uv run mypy
+
+      - name: Test
+        run: uv run pytest -v
+
+      # The three checks below are not covered by the unit suite because they
+      # are properties of the REPOSITORY, not of any module. Each has bitten
+      # this project already.
+      - name: R7 — no market data may be committable
+        run: |
+          set -euo pipefail
+          mkdir -p data/raw/entsoe data/interim data/processed/imbalance_prices
+          touch data/raw/entsoe/probe.bin data/raw/entsoe/probe.json \
+                data/interim/probe.jsonl data/processed/imbalance_prices/2026-06.parquet
+          if [ -n "$(git add -An data/ 2>/dev/null)" ]; then
+            echo "::error::Files under data/ are committable — R7 violation."
+            git add -An data/
+            exit 1
+          fi
+          echo "OK: nothing under data/ is committable."
+
+      - name: R8 — no secrets committed
+        run: |
+          set -euo pipefail
+          if git ls-files --error-unmatch .env >/dev/null 2>&1; then
+            echo "::error::.env is tracked — R8 violation."
+            exit 1
+          fi
+          echo "OK: .env is not tracked."
+
+      # src/data/ was silently shadowed by an unanchored `data/` ignore rule
+      # once already, which dropped source files from four commits without
+      # any error. This asserts every source file is actually tracked.
+      - name: Every source file is tracked by git
+        run: |
+          set -euo pipefail
+          missing=0
+          while IFS= read -r f; do
+            if ! git ls-files --error-unmatch "$f" >/dev/null 2>&1; then
+              echo "::error file=$f::Source file exists on disk but is not tracked by git."
+              missing=1
+            fi
+          done < <(find src scripts tests -name '*.py' -not -path '*/__pycache__/*')
+          [ "$missing" -eq 0 ] && echo "OK: all source files tracked."
+
+      - name: Smoke — the look-ahead gate refuses an unresolved lag
+        run: |
+          uv run python -c "
+          from datetime import datetime, timezone
+          from src.data.data_availability import available_at, UnresolvedLagError
+          isp = datetime(2026, 6, 17, 14, 30, tzinfo=timezone.utc)
+          try:
+              available_at('balance_delta', isp)
+          except UnresolvedLagError:
+              print('OK: unresolved lag refused.')
+          else:
+              raise SystemExit('FAIL: unresolved lag produced a timestamp.')
+          "

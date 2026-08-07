@@ -73,8 +73,7 @@ def imbalance_prices(
     rules = load_rules()["pricing"]["rules"]
     if regulation_state not in rules:
         raise KeyError(
-            f"Unknown regulation state {regulation_state!r}; "
-            f"known states: {sorted(rules)}."
+            f"Unknown regulation state {regulation_state!r}; known states: {sorted(rules)}."
         )
 
     supplied = {"p_up": p_up, "p_down": p_down, "p_mid": p_mid}

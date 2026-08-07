@@ -55,9 +55,7 @@ class _FakeClient:
         assert self.imbalance is not None
         return self.imbalance
 
-    def query_day_ahead_prices(
-        self, domain: str, start: object, end: object
-    ) -> pd.Series[float]:
+    def query_day_ahead_prices(self, domain: str, start: object, end: object) -> pd.Series[float]:
         assert self.day_ahead is not None
         return self.day_ahead
 
