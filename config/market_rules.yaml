@@ -297,7 +297,39 @@ publication:
       with at least one intraday update at 07:00 on the delivery day. The pair
       (D-1 17:00 vintage, D 07:00 vintage) is the legitimate forecast-error proxy
       required by CLAUDE.md §4 Features.
+
+      The top-level `rule` above resolves the FIRST vintage, which is the
+      conservative default: code that does not ask for a vintage by name gets
+      the earliest-published one and can never accidentally read a later
+      revision. Named vintages are declared below.
     source: "Reg. (EU) 543/2013 Art. 14(2)(d)"
+    vintages:
+      # Order matters: earliest-published first. available_at() with no vintage
+      # argument resolves vintages[0].
+      - name: day_ahead
+        rule: published_day_before_at
+        local_time: "17:00"
+        timezone: Europe/Amsterdam
+        note: "Reg. 543/2013 Art. 14(2)(d): 'no later than 5 p.m., one day before delivery'."
+      - name: intraday
+        rule: published_same_day_at
+        local_time: "07:00"
+        timezone: Europe/Amsterdam
+        note: >
+          Same article: "regularly updated and published during intra-day
+          trading with at least one update ... at 7 a.m. on the day of actual
+          delivery". Differencing this against the day_ahead vintage gives the
+          forecast-error proxy. Note it is NOT available for target periods
+          early on the delivery day - a feature builder must check per period,
+          not assume it.
+
+  # NOTE on the other revised: true fields. Only wind_solar_forecast_day_ahead
+  # has a declared vintage schedule so far. Load forecast, actual generation,
+  # cross-border flows and the real-time imbalance estimate are all revised, but
+  # on schedules not established from primary sources -- so they expose no named
+  # vintages and available_at() returns their single conservative
+  # first-publication time. Do not invent vintage schedules for them; measure
+  # them from the vintage log (src/data/vintage.py) once it has run long enough.
 
   actual_generation:
     rule: lag_after_period

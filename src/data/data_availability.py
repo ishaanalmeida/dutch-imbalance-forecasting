@@ -33,6 +33,15 @@ class UnresolvedLagError(RuntimeError):
     """
 
 
+class UnknownVintageError(KeyError):
+    """A named vintage was requested that the field does not declare.
+
+    Raised rather than falling back to the field's base rule: silently
+    returning the first-publication time when a caller asked for a later
+    revision would misreport when that revision was actually retrievable.
+    """
+
+
 class LookAheadError(RuntimeError):
     """A caller tried to use a datum that was not yet published."""
 
@@ -73,17 +82,87 @@ def _require_isp_aligned(ts: datetime) -> datetime:
     return ts
 
 
-def available_at(field: str, target_period_start: datetime) -> datetime:
+def _declared_vintages(field: str, spec: dict[str, object]) -> list[dict[str, object]]:
+    """The field's declared vintage schedule, validated. Empty list if none.
+
+    Validates shape rather than trusting it: a malformed `vintages:` block in a
+    rigour-zone config must fail loudly here, not produce a confusing
+    AttributeError somewhere downstream.
+    """
+    raw = spec.get("vintages")
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise UnknownVintageError(
+            f"{field!r} has a 'vintages' key that is not a list "
+            f"({type(raw).__name__}). This is a config error."
+        )
+    entries: list[dict[str, object]] = []
+    for entry in raw:
+        if not isinstance(entry, dict) or "name" not in entry:
+            raise UnknownVintageError(
+                f"{field!r} has a malformed vintage entry {entry!r}; each entry "
+                f"must be a mapping with a 'name'. This is a config error."
+            )
+        entries.append(dict(entry))
+    return entries
+
+
+def _vintage_spec(field: str, spec: dict[str, object], vintage: str) -> dict[str, object]:
+    """The sub-spec for a named vintage, or raise.
+
+    Never falls back to the field's base rule: a caller that asked for the
+    intraday revision and silently got the day-ahead publication time would
+    believe a later revision was available earlier than it was.
+    """
+    declared = _declared_vintages(field, spec)
+    if not declared:
+        raise UnknownVintageError(
+            f"{field!r} declares no named vintages, so {vintage!r} cannot be "
+            f"resolved. Call available_at() without a vintage argument to get "
+            f"its single first-publication time."
+        )
+    for entry in declared:
+        if entry["name"] == vintage:
+            return entry
+    names = [entry["name"] for entry in declared]
+    raise UnknownVintageError(
+        f"{field!r} has no vintage named {vintage!r}. Declared vintages: {names}."
+    )
+
+
+def available_at(field: str, target_period_start: datetime, vintage: str | None = None) -> datetime:
     """The instant `field` for the ISP starting at `target_period_start` first
     became retrievable, in UTC.
 
+    `vintage` selects a named revision for fields that declare a vintage
+    schedule (see `config/market_rules.yaml`). Omitting it returns the
+    **earliest** vintage — the conservative default, so code that does not
+    reason about revisions can never accidentally read a later one.
+
     Raises UnresolvedLagError if the lag is not established, UnknownFieldError
-    if the field is not declared, and ValueError if `target_period_start` is
+    if the field is not declared, UnknownVintageError if a named vintage is
+    requested that does not exist, and ValueError if `target_period_start` is
     naive or not aligned to an ISP boundary.
     """
     target_period_start = _require_aware(target_period_start, "target_period_start")
     target_period_start = _require_isp_aligned(target_period_start.astimezone(UTC))
     spec = _spec(field)
+
+    # The unresolved check runs against the PARENT spec before any vintage is
+    # resolved, so a vintage argument can never route around it.
+    if spec.get("rule") == "unresolved":
+        raise UnresolvedLagError(
+            f"The publication lag for {field!r} is not established "
+            f"(lag_confidence={spec.get('lag_confidence', spec.get('confidence'))!r}). "
+            f"It must be measured empirically and written back to "
+            f"config/market_rules.yaml with evidence before this field may be "
+            f"used. See docs/DECISIONS.md ADR-006."
+        )
+
+    if vintage is not None:
+        spec = _vintage_spec(field, spec, vintage)
+
     rule = spec.get("rule")
 
     # Dispatch on `rule` FIRST, before any `lag_seconds` is read. A field whose
@@ -132,22 +211,30 @@ def available_at(field: str, target_period_start: datetime) -> datetime:
         period_end = target_period_start + timedelta(minutes=ISP_MINUTES)
         return period_end + timedelta(seconds=lag)
 
-    if rule == "published_day_before_at":
+    if rule in ("published_day_before_at", "published_same_day_at"):
         tz = ZoneInfo(str(spec["timezone"]))
         hh, mm = (int(part) for part in str(spec["local_time"]).split(":"))
+        # The LOCAL delivery date, not the UTC one. For an ISP late in the UTC
+        # day these differ, and using the UTC date would shift publication by a
+        # whole day -- in the permissive direction.
         local_delivery = target_period_start.astimezone(tz)
-        publish_local = datetime.combine(
-            local_delivery.date() - timedelta(days=1), time(hh, mm), tzinfo=tz
-        )
+        offset = timedelta(days=1) if rule == "published_day_before_at" else timedelta(0)
+        publish_local = datetime.combine(local_delivery.date() - offset, time(hh, mm), tzinfo=tz)
         return publish_local.astimezone(UTC)
 
     raise UnknownFieldError(
         f"{field!r} has unhandled publication rule {rule!r}. Known rules: "
-        f"'lag_after_period', 'published_day_before_at', 'unresolved'."
+        f"'lag_after_period', 'published_day_before_at', "
+        f"'published_same_day_at', 'unresolved'."
     )
 
 
-def is_available(field: str, target_period_start: datetime, decision_time: datetime) -> bool:
+def is_available(
+    field: str,
+    target_period_start: datetime,
+    decision_time: datetime,
+    vintage: str | None = None,
+) -> bool:
     """True iff the datum was published STRICTLY before `decision_time`.
 
     R1 is strict, not inclusive: a datum published exactly at the decision
@@ -155,7 +242,30 @@ def is_available(field: str, target_period_start: datetime, decision_time: datet
     before" are not the same guarantee.
     """
     decision_time = _require_aware(decision_time, "decision_time")
-    return available_at(field, target_period_start) < decision_time.astimezone(UTC)
+    return available_at(field, target_period_start, vintage) < decision_time.astimezone(UTC)
+
+
+def available_vintages(
+    field: str, target_period_start: datetime, decision_time: datetime
+) -> list[str]:
+    """Names of the vintages of `field` visible at `decision_time`, earliest first.
+
+    This is what the feature builder needs in order to compute forecast-revision
+    features (CLAUDE.md §4). Whether two vintages exist is a **per-period** fact,
+    not a global one: the 07:00 intraday wind/solar update is not available for
+    target periods early on the delivery day, so a builder that assumes both
+    vintages always exist would read the future for every early-morning ISP.
+
+    Returns `[]` for a field with no declared vintage schedule — absence of a
+    schedule is not the same as a single unnamed vintage, and callers should
+    use `available_at`/`is_available` for those.
+    """
+    declared = _declared_vintages(field, _spec(field))
+    return [
+        str(entry["name"])
+        for entry in declared
+        if is_available(field, target_period_start, decision_time, vintage=str(entry["name"]))
+    ]
 
 
 def assert_available(field: str, target_period_start: datetime, decision_time: datetime) -> None:

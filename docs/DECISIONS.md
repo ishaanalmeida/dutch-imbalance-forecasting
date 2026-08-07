@@ -292,3 +292,66 @@ explicit `ValueError` as `write_frame()` on a naive `start`/`end`, instead of
 surfacing pandas' incidental `TypeError`. `cache.py`'s module docstring now
 states `load_raw` is the intended re-parse entry point and is not yet wired
 into any pipeline, rather than leaving that claim only implicit.
+
+## ADR-012 — `available_at` gains a vintage dimension; default stays conservative
+
+**Context.** Six of the ten publication fields are `revised: true`. The final
+Phase 1 review flagged that `available_at(field, target)` returned a single
+answer per field, so the feature builder could not ask "when was the *second*
+vintage retrievable?" — blocking the forecast-error proxy CLAUDE.md §4 names as
+a key feature. Reg. 543/2013 Art. 14(2)(d) mandates exactly two wind/solar
+vintages: 17:00 on D-1, and an intraday update at 07:00 on D.
+
+**Decision.** Fields may declare a `vintages:` list in
+`config/market_rules.yaml`, earliest-published first. `available_at` takes an
+optional `vintage` name; **omitting it resolves the earliest vintage**, so code
+that does not reason about revisions can never accidentally read a later one.
+`available_vintages(field, target, decision_time)` returns the names visible at
+a decision instant. A new rule, `published_same_day_at`, expresses the intraday
+update.
+
+**Why the default is the earliest and not the latest.** The latest vintage is
+the most informative and the most dangerous: it is the one that did not exist
+at decision time. Defaulting to it would make every un-annotated call site a
+potential R1 violation. Defaulting to the earliest makes the failure mode
+"slightly less information than we could have had", which is recoverable.
+
+**Why an unknown vintage raises instead of falling back.** A caller that asked
+for the intraday revision and silently received the day-ahead publication time
+would believe a later revision was available earlier than it was — a look-ahead
+error that reads as correct code. Verified by mutation: adding a fallback is
+killed by the test suite.
+
+**Guard.** The unresolved-lag check runs against the parent spec *before* any
+vintage is resolved, so a vintage argument cannot route around it.
+
+**Scope.** Only `wind_solar_forecast_day_ahead` has a declared schedule. The
+other revised fields are revised on schedules not established from primary
+sources; they expose no named vintages and return their conservative
+first-publication time. Those schedules should be *measured* from the vintage
+log (ADR-013), not invented.
+
+## ADR-013 — the vintage log lives outside `data/` and is committed
+
+**Context.** ENTSO-E and Open-Meteo both serve the current vintage only. R1
+requires the first-published vintage. A history pulled later is therefore not
+what was visible at the time, and the difference is unrecoverable.
+
+**Decision.** `src/data/vintage.py` is an append-only store keyed on
+`(observed_at, target_time)`; nothing is ever overwritten, and `latest_as_of`
+returns only what was observed strictly before a given instant. Records live in
+`vintage_log/`, **outside** `data/`, and are committed.
+
+**Why outside `data/`.** `data/` is gitignored under R7 because it holds raw
+licensed market data. The vintage log is our own forecast captures, and it must
+survive a clean checkout — a track record that vanishes on clone is not a track
+record. Keeping the two in separate trees makes the licensing distinction
+structural rather than a matter of remembering.
+
+**Why first-write-wins on a duplicate `(observed_at, target_time)`.** A given
+`observed_at` names one observation. Silently replacing its values on a re-run
+would rewrite history, which is precisely what this store exists to prevent.
+
+**Cost, stated.** This only works forward in time. Every scheduled run that does
+not happen is a vintage that never existed. That is why the job was started
+before the model exists rather than after.
