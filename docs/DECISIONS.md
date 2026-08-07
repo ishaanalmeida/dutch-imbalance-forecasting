@@ -465,3 +465,53 @@ them, compare like-for-like calendar windows across years once more history is
 loaded, and reconstruct the regulation state directly rather than inferring it
 from the price columns. Until then this is reported as a hypothesis with
 supporting evidence, never as a demonstrated causal effect.
+
+## ADR-017 — the balance-delta delay is real and configurable; I over-corrected
+
+**Correcting ADR-006 in part.** ADR-006 withdrew the trade-press claim of a
+3 → 5 → 2 minute publication *delay*, on the grounds that TenneT's public pages
+documented only **cadence** changes and listed an added delay as an option with
+"no concrete plans". That was right about the evidence and **too strong about
+the conclusion**: I let "the timeline is unsubstantiated" drift toward "a delay
+may not exist at all".
+
+**New primary evidence (2026-08-07)**, from TenneT's own API documentation for
+`Balance Delta High Res`:
+
+> "Responses return the most recent available 30 minutes, **subject to a
+> configurable delay imposed by TenneT**."
+
+So a delay mechanism demonstrably exists, and it is a knob TenneT turns. What
+remains unpublished is its *current value* — which is what the harness measures.
+
+**What this changes:**
+
+- The delay is real. Say so, rather than implying the concept was invented.
+- "Configurable" means it can change without notice, so the measurement must be
+  **repeatable and re-run**, not done once and trusted forever. `time_varying`
+  stays, and now on primary grounds rather than as a hedge.
+- The lag stays `null` / `unresolved` in config. Knowing a delay exists is not
+  knowing its value, and the field must keep refusing until measured.
+
+**What ADR-006 got right and keeps:** cadence and delay are different
+mechanisms, the trade press conflated them, and the specific 3/5/2 timeline is
+still unsupported by anything primary. Measuring beats citing either way.
+
+**Also now known from the same source**, and encoded in the harness:
+
+| Fact | Value |
+|---|---|
+| Endpoint | `https://api.tennet.eu/publications/v1/balance-delta-high-res/latest` |
+| Rate limit (`/latest`) | 1 req/sec, **10 req/min** |
+| Rate limit (timeframe endpoint) | **8 req/DAY**, max 4-hour window |
+| Refresh cadence | every 12 s; poll 1 s after each event (:01, :13, :25, :37, :49) |
+| Response window | most recent 30 minutes |
+| Timestamps | UTC |
+| Auth | Azure API Management subscription key (403 is served by Azure App Gateway) |
+| Bulk history | manual download, up to 100 MB, from TenneT's transparency download page |
+
+**A bug this caught.** The harness previously defaulted to polling every 5
+seconds — 12 requests/minute, over TenneT's 10/min cap, which their docs say
+"may result in temporary blocking of your API keys". It now follows TenneT's
+recommended five-per-minute schedule and counts requests per minute against the
+cap. A test pins the cadence so nobody "optimises" it back over the limit.
