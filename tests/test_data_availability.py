@@ -27,7 +27,13 @@ from src.data.data_availability import (
 )
 from src.market import load_rules
 
-VALID_RULES = {"lag_after_period", "published_day_before_at", "unresolved"}
+VALID_RULES = {
+    "lag_after_period",
+    "published_day_before_at",
+    "published_same_day_at",
+    "published_day_after_at",
+    "unresolved",
+}
 
 
 def test_every_publication_field_declares_a_known_rule() -> None:
@@ -47,7 +53,11 @@ def test_no_negative_lag_sentinels_remain() -> None:
 
 def test_day_before_fields_declare_a_publication_time() -> None:
     for field, spec in load_rules()["publication"].items():
-        if spec["rule"] == "published_day_before_at":
+        if spec["rule"] in {
+            "published_day_before_at",
+            "published_same_day_at",
+            "published_day_after_at",
+        }:
             assert "local_time" in spec, f"{field} needs a local_time"
             assert "timezone" in spec, f"{field} needs a timezone"
 

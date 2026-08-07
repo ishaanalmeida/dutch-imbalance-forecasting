@@ -355,3 +355,54 @@ would rewrite history, which is precisely what this store exists to prevent.
 **Cost, stated.** This only works forward in time. Every scheduled run that does
 not happen is a vintage that never existed. That is why the job was started
 before the model exists rather than after.
+
+## ADR-014 — settled prices publish on a wall clock, not at a fixed lag
+
+**Found by running the CLI, not by reading the code.** `src.cli availability`
+printed the settled price as available `2026-08-08T20:15Z` for a `10:00Z` ISP,
+which looked plausible until checked against the source.
+
+**Context.** [IPS61] §3.2: *"After the delivery day (D+1), the process of
+financial settlement starts at 10.00 a.m."* That is a wall-clock rule, and one
+run settles the **whole** delivery day. Phase 0 encoded it as a fixed
+`lag_seconds: 122400` (34 h), described as "worst case".
+
+**The error.** A fixed lag is wrong in *shape*, not just in value. Measured
+against D+1 10:00 local it was **up to 21 hours too late** for mid-day ISPs,
+and it made different ISPs of the same delivery day settle at different
+instants, which cannot happen.
+
+**Why it mattered far more than "conservative on the target" suggests.** The
+settled price is the target, so a late availability time is harmless *for the
+target*. But CLAUDE.md §4 mandates baselines that consume **lagged settled
+prices** — persistence, and seasonal naive (same period, previous day/week).
+Under the fixed lag, a seasonal-naive baseline could not use yesterday's settled
+price at **0 of 6** sampled ISPs, though it genuinely had it.
+
+An artificially weak baseline flatters every model measured against it. This was
+therefore a bias in the *favourable* direction — the exact failure R4 ("baselines
+first, always") exists to prevent, and the kind that survives review because
+nothing looks broken.
+
+**Decision.** New rule `published_day_after_at`, applied to
+`imbalance_price_settled` and `regulation_state`. The three wall-clock rules
+(`_day_before`, `_same_day`, `_day_after`) now share one implementation
+differing only by a day offset.
+
+**Verification.** Reverting the config to the fixed lag is killed by the suite.
+Tests pin: one publication instant per delivery day; the target never usable at
+its own decision time (checked across every ISP of a day); the baseline can
+reach D-1; and both boundary cases where it legitimately cannot.
+
+**Honest caveat.** [IPS61] says the settlement *process starts* at 10:00 — not
+that prices are retrievable at 10:00. And we will fetch from ENTSO-E, whose own
+publication deadline for imbalance prices was never verified against Reg.
+543/2013 (still listed UNRESOLVED in DOMAIN_NOTES Q7). So 10:00 local is the
+best primary-sourced estimate, not a measured fact. Measure it from the vintage
+log once the token lands, and tighten this entry then.
+
+**Recurring lesson.** All three of my own mistakes while fixing this were the
+same one: treating a UTC calendar day as a delivery day. 00:00 UTC is already
+02:00 in Amsterdam. Any "same period yesterday" arithmetic must be done in local
+delivery days, and `test_late_evening_utc_isp_belongs_to_the_next_local_delivery_day`
+pins that for whoever writes the feature builder.
