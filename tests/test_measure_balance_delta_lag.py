@@ -39,6 +39,14 @@ def test_uses_the_documented_endpoint() -> None:
     assert harness.LATEST_PATH == "/publications/v1/balance-delta-high-res/latest"
 
 
+def test_auth_header_matches_the_spec() -> None:
+    """Confirmed from the spec page's Authorize dialog: scheme `apikey`,
+    name `apikey`, in `header`. TenneT renamed it from Azure API Management's
+    default `Ocp-Apim-Subscription-Key`; using the Azure default would fail
+    with a 401 that looks like a bad key rather than a bad header name."""
+    assert harness.KEY_HEADER == "apikey"
+
+
 def test_extract_records_finds_a_timestamp_in_a_list_payload() -> None:
     payload = [{"timestamp": "2026-08-07T10:00:00Z", "value": 1.0}]
     got = harness.extract_records(payload)

@@ -55,6 +55,57 @@ an automated one. **Read the fair-use policy before any scheduled polling
 begins** — nothing about its rate limits or acceptable-use terms has been
 verified yet.
 
+### How to get a TenneT API key (verified 2026-08-07)
+
+1. Register at <https://developer.tennet.eu/register/> — name, email, and
+   acceptance of the privacy statement and fair use policy.
+2. Log in at <https://developer.tennet.eu/login/>. Two routes are offered: a
+   **MyTenneT account**, or **email login**.
+3. **The "API Keys" tab appears only once logged in.** It is not in the public
+   navigation, which is why it is invisible before signing in. From TenneT's
+   own FAQ: *"You can log into the portal, and on the tab API Keys you can find
+   and revoke all your keys and also request new ones."*
+4. Put the key in `.env` as `TENNET_API_KEY`. Never in code or a commit (R8).
+
+### Auth and error codes (from TenneT's FAQ and verified against the live API)
+
+| Signal | Meaning |
+|---|---|
+| Header name | **`apikey`** — confirmed from the spec page's `Authorize` dialog (scheme `apikey`, in `header`). **Not** Azure's default `Ocp-Apim-Subscription-Key`, despite Azure API Management fronting the service. |
+| `403` | `apikey` header missing entirely. Reproduced live without the header. |
+| `401` | Header present, key invalid. |
+| `429` | Rate limit exceeded. |
+| TLS | **TLS 1.2 was disabled on 11/11**; clients must support **TLS 1.3**. Verified our stack negotiates it (OpenSSL 3.5.7). |
+
+Assuming the Azure default header would have produced a `401` that reads like a
+bad key rather than a bad header name — an hour of debugging the wrong thing.
+
+### Rate limits and how to get history
+
+The FAQ says there are limits **per second, per hour and per day**, and that
+they differ per API — check each spec. For `Balance Delta High Res`:
+
+- `/balance-delta-high-res/latest`: 1 req/sec, **10 req/min**; refresh every
+  12 s; TenneT recommends polling 1 s after each refresh (`:01 :13 :25 :37 :49`).
+- `/balance-delta-high-res` (by timeframe): **8 req/DAY**, max 4-hour window.
+
+**Do not try to backfill history through the API.** TenneT is explicit:
+*"The API is not the proper channel for this, to consume larger amounts of
+historic data please use the download function on the website"* — up to 100 MB
+per download from the transparency download page. Requests for higher quotas
+are declined for this reason.
+
+Support: `apisupport@tennet.eu`.
+
+### APIs available on the portal
+
+Ten in total. Beyond `balance-delta-high-res`, `settlement-prices` and
+`settled-imbalance-volumes`, note **`merit-order-list`** and
+**`merit-order-list-bid-prices-incident-reserve`** — the bid ladder, which
+would allow reconstructing `p_up` / `p_down` / `p_mid` from first principles
+rather than consuming published prices. That is the Phase-0 stretch direction
+on market microstructure, now known to be reachable.
+
 ## The weather trap — read before writing the weather fetcher
 
 Use Open-Meteo's **historical forecast** endpoint, never the ERA5 reanalysis

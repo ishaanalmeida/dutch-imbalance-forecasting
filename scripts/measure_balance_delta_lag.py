@@ -49,12 +49,14 @@ OUT = Path(__file__).resolve().parents[1] / "data" / "interim" / "balance_delta_
 BASE_URL = "https://api.tennet.eu"
 LATEST_PATH = "/publications/v1/balance-delta-high-res/latest"
 
-# Azure API Management fronts this API (verified: the 403 comes from
-# Microsoft-Azure-Application-Gateway). Azure's default subscription-key header
-# is `Ocp-Apim-Subscription-Key`, but a publisher may rename it -- the exact
-# name is shown by the "Authorize" button on the spec page. Overridable so a
-# rename does not require a code change.
-KEY_HEADER = os.getenv("TENNET_API_KEY_HEADER", "Ocp-Apim-Subscription-Key")
+# CONFIRMED 2026-08-07 from the spec page's "Authorize" dialog:
+#   scheme: apikey (apiKey)   name: apikey   in: header
+# Azure API Management fronts this API (its 403 is served by
+# Microsoft-Azure-Application-Gateway), but TenneT has renamed the subscription
+# header from Azure's default `Ocp-Apim-Subscription-Key` to plain `apikey`.
+# Assuming the Azure default would have produced a 401 that looked like a bad
+# key rather than a bad header name. Overridable in case it changes.
+KEY_HEADER = os.getenv("TENNET_API_KEY_HEADER", "apikey")
 
 # TenneT's recommended poll offsets within each minute: one second after each
 # 12-second data-refresh event.
