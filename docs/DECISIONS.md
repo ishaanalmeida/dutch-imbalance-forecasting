@@ -406,3 +406,62 @@ same one: treating a UTC calendar day as a delivery day. 00:00 UTC is already
 02:00 in Amsterdam. Any "same period yesterday" arithmetic must be done in local
 delivery days, and `test_late_evening_utc_isp_belongs_to_the_next_local_delivery_day`
 pins that for whoever writes the feature builder.
+
+## ADR-015 — ENTSO-E carries dual pricing; the Q3 open question is closed
+
+**Verified live on 2026-08-07**, first call with a real token.
+
+- The NL imbalance item returns **two distinct columns**, `Long` and `Short`,
+  renamed at the boundary to `price_long` / `price_short`. **TenneT's own feed
+  is therefore NOT required for settlement**, which removes the fallback risk
+  DOMAIN_NOTES Q3 flagged.
+- 96 rows/day exactly, UTC, 15-minute spacing — the ISP length is confirmed
+  empirically, not just from documentation.
+- **`price_short >= price_long` held across 8,064 ISPs (2025-11 to 2026-07)
+  with zero violations.** That invariant was derived by hand from [IPS61]
+  Table 2 before any data existed. Real market data agreeing with it is the
+  strongest available evidence that the settlement logic is right.
+- The two prices differ in roughly **35%** of ISPs — dual pricing is common,
+  not an edge case. This materially raises the expected value of the
+  risk-aware dispatch policy over the deterministic one, which is the
+  comparison Phase 3 exists to make.
+
+The live assertions now live in the integration test, so a change in ENTSO-E's
+schema or in the settlement rules surfaces as a failure rather than as a
+silently wrong backtest.
+
+## ADR-016 — ADR-007's structural-break prediction: consistent, not proven
+
+ADR-007 predicted that state 2 would become **more** frequent from 2026-02-03,
+when TenneT switched the regulation-state input from the 1-minute to the
+12-second balance delta (15 -> 75 samples per ISP), with no change in the
+physical system.
+
+Measured on the share of ISPs where `price_long != price_short`, which is a
+**lower bound** on state 2 (a fully reverse-priced state-2 ISP has the two
+equal):
+
+| Window | Input | Dual-priced |
+|---|---|---|
+| 2025-11-01..15 | 1-min | 32.1% |
+| 2025-12-01..15 | 1-min | 28.9% |
+| 2026-01-10..24 | 1-min | 33.6% |
+| 2026-02-10..24 | 12s | 33.9% |
+| 2026-04-01..15 | 12s | 42.9% |
+| 2026-07-01..15 | 12s | 42.1% |
+
+Pooled: **31.5% before, 39.6% after — +8.1 points**, in the predicted
+direction.
+
+**But this is not proof, and it should not be reported as such.** Three
+reasons: the windows straddle winter and summer, so seasonality is an
+uncontrolled confound; the window immediately after the change (Feb 10-24,
+33.9%) is barely above the pre-period, with the rise concentrated in April and
+July, which is what a seasonal explanation would also look like; and the sample
+is six fortnights, not a designed test.
+
+**Status: consistent with the mechanism, confounded with season.** To separate
+them, compare like-for-like calendar windows across years once more history is
+loaded, and reconstruct the regulation state directly rather than inferring it
+from the price columns. Until then this is reported as a hypothesis with
+supporting evidence, never as a demonstrated causal effect.

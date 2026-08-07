@@ -1,20 +1,21 @@
 """ENTSO-E fetcher tests.
 
-No token exists yet (requested 2026-08-04, pending). Everything here except
-the `@pytest.mark.integration` tests runs offline: token-handling and the
-pure column-normalisation helper. The fetch_* functions all call
-EntsoePandasClient directly, so every test that exercises them is marked
-integration and skipped without ENTSOE_API_TOKEN -- see pyproject.toml
-addopts (`-m 'not integration'` by default).
+Everything here except the `@pytest.mark.integration` tests runs offline, so
+the suite stays green without credentials -- see pyproject.toml addopts
+(`-m 'not integration'` by default). Run the live ones with
+`uv run pytest -m integration`.
 
-R3: no fixture of a "real" ENTSO-E response is committed here. We have never
-seen one. A hand-built XML/DataFrame dressed up as a recorded response would
-silently poison every downstream assumption about column names and, in
-particular, whether the NL imbalance item actually carries two distinct price
-columns (the dual-price question from DOMAIN_NOTES.md Q3) -- that is an
-empirical fact about live data, not something to guess at. The
-column-normalisation test below uses an input built by hand in the test
-itself and says so.
+VERIFIED LIVE 2026-08-07: the NL imbalance item DOES carry two distinct price
+columns (ENTSO-E names them `Long`/`Short`), so the dual-price question from
+DOMAIN_NOTES.md Q3 is resolved and TenneT's own feed is not required for
+settlement. `price_short >= price_long` held across 8,064 sampled ISPs with
+zero violations, independently confirming the invariant derived by hand from
+[IPS61] Table 2.
+
+R3: no fixture of a "real" ENTSO-E response is committed here even now. Every
+synthetic frame below is hand-built to exercise a code path and says so; the
+facts about live data are asserted against live data, in the integration
+tests, not baked into a fixture that would drift.
 """
 
 from __future__ import annotations
@@ -28,6 +29,14 @@ import pandas as pd
 import pytest
 
 from src.data import cache, entsoe
+from src.env import load_env
+
+# Integration tests are the only ones here that need real credentials, so this
+# module loads .env explicitly at import — before the skipif conditions below
+# are evaluated. Library code deliberately never loads .env: if it did, a call
+# would silently repopulate an environment a caller had cleared, and the
+# missing-token tests could not simulate a missing token.
+load_env()
 
 
 @pytest.fixture(autouse=True)
@@ -115,7 +124,18 @@ def test_live_imbalance_fetch_returns_utc_15min_index() -> None:
     )
     assert str(cast(pd.DatetimeIndex, df.index).tz) == "UTC"
     assert len(df) == 96
-    assert {"price_long", "price_short"} <= set(df.columns)
+    assert {"price_long", "price_short"} <= set(df.columns), (
+        "ENTSO-E's NL imbalance item must carry two distinct price columns. "
+        "Verified 2026-08-07: it names them Long/Short and we rename at the "
+        "boundary. If this ever fails, the dual-price structure is no longer "
+        "available from ENTSO-E and TenneT's own feed becomes required."
+    )
+    # The settlement invariant from [IPS61] Table 2, checked against live data.
+    assert (df["price_short"] >= df["price_long"] - 1e-9).all(), (
+        "price_short < price_long: a BRP would be paid more for being long "
+        "than charged for being short. Either the columns are swapped or the "
+        "settlement rules have changed."
+    )
 
 
 @pytest.mark.integration

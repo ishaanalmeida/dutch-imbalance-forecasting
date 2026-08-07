@@ -29,6 +29,7 @@ from src.data.data_availability import (
     is_available,
 )
 from src.data.timebase import isp_start_of
+from src.env import load_env
 from src.market import cash_to_brp, imbalance_prices, load_rules
 
 _RULE = "-" * 72
@@ -299,6 +300,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Entry point: credentials come from .env here, once, not from library code.
+    load_env()
     args = build_parser().parse_args(argv)
     result: int = args.fn(args)
     return result
