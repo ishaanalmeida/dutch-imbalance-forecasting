@@ -228,9 +228,15 @@ publication:
       assumed. An over-generous lag is a direct R1 look-ahead violation.
 
   imbalance_price_settled:
-    rule: lag_after_period
+    # Wall-clock, NOT a lag. [IPS61] §3.2: settlement for delivery day D starts
+    # at 10:00 on D+1 -- one run settles the whole day, so every ISP of D
+    # becomes available at the same instant. Previously modelled as a fixed 34h
+    # lag, which was up to 21h too late for mid-day ISPs and silently crippled
+    # the mandatory seasonal-naive baseline. See docs/DECISIONS.md ADR-014.
+    rule: published_day_after_at
+    local_time: "10:00"
+    timezone: Europe/Amsterdam
     cadence_seconds: 900
-    lag_seconds: 122400     # D+1 10:00 CET, worst case ~34h after ISP end
     revised: false
     confidence: primary
     note: >
@@ -250,9 +256,11 @@ publication:
       as the target, and its revision to the settled value must be respected.
 
   regulation_state:
-    rule: lag_after_period
+    # Settled by the same D+1 process as the price above.
+    rule: published_day_after_at
+    local_time: "10:00"
+    timezone: Europe/Amsterdam
     cadence_seconds: 900
-    lag_seconds: 122400
     revised: false
     confidence: primary
     note: >

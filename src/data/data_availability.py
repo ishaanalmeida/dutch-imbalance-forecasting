@@ -211,21 +211,31 @@ def available_at(field: str, target_period_start: datetime, vintage: str | None 
         period_end = target_period_start + timedelta(minutes=ISP_MINUTES)
         return period_end + timedelta(seconds=lag)
 
-    if rule in ("published_day_before_at", "published_same_day_at"):
+    # Wall-clock publication rules. These express "published at HH:MM local on
+    # the day before / the same day / the day after delivery", which is how
+    # scheduled market processes actually work: one run covers a whole delivery
+    # day at once, rather than each period becoming available a fixed offset
+    # after itself.
+    _DAY_OFFSET = {
+        "published_day_before_at": -1,
+        "published_same_day_at": 0,
+        "published_day_after_at": +1,
+    }
+    if rule in _DAY_OFFSET:
         tz = ZoneInfo(str(spec["timezone"]))
         hh, mm = (int(part) for part in str(spec["local_time"]).split(":"))
         # The LOCAL delivery date, not the UTC one. For an ISP late in the UTC
         # day these differ, and using the UTC date would shift publication by a
         # whole day -- in the permissive direction.
         local_delivery = target_period_start.astimezone(tz)
-        offset = timedelta(days=1) if rule == "published_day_before_at" else timedelta(0)
-        publish_local = datetime.combine(local_delivery.date() - offset, time(hh, mm), tzinfo=tz)
+        publish_date = local_delivery.date() + timedelta(days=_DAY_OFFSET[str(rule)])
+        publish_local = datetime.combine(publish_date, time(hh, mm), tzinfo=tz)
         return publish_local.astimezone(UTC)
 
     raise UnknownFieldError(
         f"{field!r} has unhandled publication rule {rule!r}. Known rules: "
         f"'lag_after_period', 'published_day_before_at', "
-        f"'published_same_day_at', 'unresolved'."
+        f"'published_same_day_at', 'published_day_after_at', 'unresolved'."
     )
 
 
