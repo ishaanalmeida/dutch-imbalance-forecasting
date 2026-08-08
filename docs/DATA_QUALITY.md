@@ -1,31 +1,39 @@
 # Data Quality Report
 
-TODO: not yet measured.
+_Generated 2026-08-08T11:17:55.790978+00:00 from dataset `imbalance_prices`, 26208 cached rows._
 
-No ENTSO-E API token or TenneT data-access registration exists yet (see
-`docs/DATA_SOURCES.md`), so nothing is cached under `data/processed/`. Per
-CLAUDE.md R3 ("never fabricate a number"), this file deliberately carries no
-numbers rather than a plausible-looking placeholder — an empty-but-formatted
-report would read as "zero data-quality issues found", which is a different
-and false claim from "no data has been fetched".
+## Gaps
 
-The diagnostic functions this report will be built from
-(`gap_report`, `duplicate_report`, `regulation_state_distribution`,
-`structural_break_check`) are implemented and unit-tested against synthetic
-frames in `src/data/quality.py` / `tests/test_quality.py`. In particular,
-`structural_break_check` is wired to test the ADR-007 prediction
-(`docs/DECISIONS.md`): that the share of regulation state 2 (the only
-dual-priced state) should **rise** at 2026-02-03, when TenneT switched the
-regulation-state determination input from the 1-minute to the 12-second
-balance delta, with no change to the physical system. If it does not rise,
-that is reported here plainly and `docs/DOMAIN_NOTES.md` Q7's reasoning must
-be corrected.
+_none_
 
-Regenerate this file once data is cached:
+## Duplicates
+
+_none_
+
+## Regulation state distribution
+
+_Skipped: this dataset has no `regulation_state` column. The settled ENTSO-E feed publishes the two prices but not the state, so the dual-price analysis below stands in for it._
+
+## Settlement invariant
+
+`price_short >= price_long` follows from Table 2 for every regulation state: a BRP can never be paid more for being long than it is charged for being short in the same period. A non-zero count means the columns are swapped or the settlement rules have changed.
+
+**Violations: 0 of 26208 ISPs.**
+
+## Dual pricing
+
+**35.9% of 26208 ISPs are dual-priced** (`price_long != price_short`).
+
+This is a rigorous **lower bound** on the frequency of regulation state 2, not its exact value: states 0/+1/-1 always price both sides identically, so a difference implies state 2 — but a fully reverse-priced state-2 period collapses both legs to the mid-price and is counted here as single-priced.
+
+## Structural breaks — dual-price share before/after
+
+ADR-007 predicts the state-2 share RISES at 2026-02-03, when TenneT switched the regulation-state input from the 1-minute to the 12-second balance delta (15 → 75 samples per ISP), with no change in the physical system. Reported plainly whichever way it goes: if it did not rise, ADR-007's reasoning is wrong and must be corrected rather than explained away.
+
+**Confounded with season** — these windows span winter to summer, so a rise is consistent with the mechanism but does not demonstrate it (ADR-016).
 
 ```
-uv run python scripts/build_quality_report.py [--dataset NAME]
+      date                                                 what  dual_share_before  dual_share_after  n_before  n_after
+2025-11-25                    balance_delta_cadence_1min_to_12s           0.309028          0.364165      2304    23904
+2026-02-03 regulation_state_input_switched_to_12s_balance_delta           0.288010          0.396764      9024    17184
 ```
-
-The script refuses to overwrite this file from an empty cache (same R3
-reasoning) — see its module docstring for details.

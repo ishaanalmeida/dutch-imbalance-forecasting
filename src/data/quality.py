@@ -140,3 +140,81 @@ def structural_break_check(df: pd.DataFrame) -> pd.DataFrame:
             }
         )
     return pd.DataFrame(rows, columns=_STRUCTURAL_BREAK_COLUMNS)
+
+
+# --- dual pricing: a rigorous lower bound on regulation state 2 --------------
+#
+# The settled feed gives two prices per ISP but not the regulation state. From
+# the settlement rules ([IPS61] Table 2): states 0, +1 and -1 always price both
+# sides identically, and only state 2 can price them differently. So
+# price_long != price_short IMPLIES state 2 -- but not conversely, because a
+# fully reverse-priced state-2 period collapses both legs to the mid-price.
+#
+# Everything below is therefore a LOWER BOUND on the frequency of state 2, and
+# is named `dual_price_*` rather than `state_2_*` so nobody reports it as the
+# state's exact frequency.
+
+_PRICE_EPS = 1e-9
+
+
+def dual_price_share(df: pd.DataFrame) -> float:
+    """Fraction of ISPs whose long and short settlement prices differ."""
+    if df.empty:
+        return 0.0
+    differ = (df["price_long"] - df["price_short"]).abs() > _PRICE_EPS
+    return float(differ.mean())
+
+
+def settlement_invariant_violations(df: pd.DataFrame) -> int:
+    """Count ISPs where price_short < price_long.
+
+    That invariant follows from Table 2 for every regulation state: a BRP can
+    never be paid more for being long than it is charged for being short in the
+    same period. A non-zero count means the columns are swapped or the
+    settlement rules have changed -- both are emergencies, not curiosities.
+    """
+    if df.empty:
+        return 0
+    return int((df["price_short"] < df["price_long"] - _PRICE_EPS).sum())
+
+
+def dual_price_break_report(df: pd.DataFrame) -> pd.DataFrame:
+    """Dual-price share before vs after each structural break in the config.
+
+    Built to test the ADR-007 prediction: that state 2 should become MORE
+    frequent from 2026-02-03, when TenneT switched the regulation-state
+    determination input from the 1-minute to the 12-second balance delta (15 ->
+    75 samples per ISP), with no change in the physical system.
+
+    Reports the numbers either way. If the share does not rise, the reasoning
+    in ADR-007 is wrong and must be corrected rather than explained away.
+    """
+    from src.market import load_rules
+
+    rows = []
+    for brk in load_rules()["structural_breaks"]:
+        when = pd.Timestamp(str(brk["date"])).tz_localize("UTC")
+        before, after = df[df.index < when], df[df.index >= when]
+        if before.empty or after.empty:
+            continue  # data does not span this break; nothing to compare
+        rows.append(
+            {
+                "date": str(brk["date"]),
+                "what": brk["what"],
+                "dual_share_before": dual_price_share(before),
+                "dual_share_after": dual_price_share(after),
+                "n_before": len(before),
+                "n_after": len(after),
+            }
+        )
+    return pd.DataFrame(
+        rows,
+        columns=[
+            "date",
+            "what",
+            "dual_share_before",
+            "dual_share_after",
+            "n_before",
+            "n_after",
+        ],
+    )

@@ -5,13 +5,13 @@ state at 15-minute resolution, and battery dispatch optimised against the full
 predictive distribution — backtested under real settlement rules, real
 publication latency, and an explicit market-impact model.
 
-## Status: Phase 1 built, no data fetched yet
+## Status: Phase 1 complete, connected to live data
 
 | Phase | State |
 |---|---|
 | 0 — Domain verification | ✅ [`docs/DOMAIN_NOTES.md`](docs/DOMAIN_NOTES.md), [`config/market_rules.yaml`](config/market_rules.yaml) |
-| 1 — Data layer | ✅ built and tested — ⚠️ **no data fetched**: awaiting ENTSO-E token and TenneT registration |
-| 2 — Forecasting | ⬜ blocked on data |
+| 1 — Data layer | ✅ built, tested, and **connected to live data** (ENTSO-E + TenneT) |
+| 2 — Forecasting | ⬜ next |
 | 3 — Dispatch optimisation | ⬜ |
 | 4 — Backtest | ⬜ |
 | 5 — Demo | ⬜ |
@@ -81,10 +81,10 @@ currently matter most:
    not 15). Same rule wording, but monotonicity is less likely over more
    samples, so state 2 (the only dual-priced state) should get more frequent
    with no change in the physical system. Only ~6 months of post-change data.
-2. **The balance-delta publication lag is unknown.** The widely-cited
-   3 → 5 → 2 minute timeline could not be substantiated — TenneT's own pages
-   document *cadence* changes, not *delay* changes. It is `null` in config and
-   Phase 1 measures it from data; until then no feature may use balance delta.
+2. **The balance-delta lag is measured (134 s) but over a narrow window** —
+   2.18 hours of one weekday afternoon. Not overnight, weekends, or scarcity,
+   which is when a battery earns most. TenneT describe the delay as
+   *configurable*, so re-measure across 24 h before trusting a revenue figure.
 3. PICASSO (18 Oct 2024) left price formation unchanged — confirmed by v6.1 —
    but shifted the price *distribution*, plausibly halving volatility.
 

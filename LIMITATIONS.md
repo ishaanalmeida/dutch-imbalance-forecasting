@@ -3,11 +3,13 @@
 Maintained from day one, not written at the end. Everything here is a known
 weakness in the evidence this project produces.
 
-**Project status: Phase 0 (domain verification) complete and awaiting review. No
-data has been fetched, no model trained, no backtest run.** Every performance,
-revenue and accuracy claim below is therefore `TODO: not yet measured` (R3).
+**Project status (2026-08-08): Phase 1 data layer built and connected to live
+data. ENTSO-E and TenneT credentials are working; ~8 months of NL imbalance
+prices have been read. No model has been trained and no backtest has been run**,
+so every performance, revenue and accuracy claim remains `TODO: not yet
+measured` (R3).
 
-## Established in Phase 0
+## Established in Phases 0-1
 
 ### PICASSO shifted the price distribution, even though the rules held
 Resolved in review: TenneT's *Imbalance Pricing System* **v6.1 (21 Oct 2024)**
@@ -22,29 +24,36 @@ volatility roughly halved. Results spanning 2024-10-18 must be segmented, and a
 model fitted mostly on pre-PICASSO data will be miscalibrated on the tails that
 matter most for battery revenue.
 
-### The balance-delta publication lag is unmeasured pending registration
-The widely-repeated 3 → 5 → 2 minute *delay* timeline could not be substantiated
-against TenneT's own pages, which document only **cadence** changes (1/min →
-5/min → every 12 s) and describe an added delay as an option with "no concrete
-plans" as of 2025-10-28. The two were likely conflated in trade press.
+### The balance-delta lag is measured, but over a narrow window
 
-A programmatic route to the data now exists: `developer.tennet.eu` hosts a
-registered-access API portal listing a "Balance Delta High Res" endpoint,
-reachable behind free registration (name, email, acceptance of the privacy
-statement and fair use policy). That registration requires the repo owner's
-identity and agreement to legal terms and has not been performed as part of
-this spike — see `docs/DATA_SOURCES.md` "TenneT access" for the full probe
-record. Until it is done, the endpoint path, auth mechanism, and response
-schema remain unseen, and `scripts/measure_balance_delta_lag.py` is built and
-ready to run but cannot execute past its single, clearly-marked
-`NotImplementedError`.
+**Measured 2026-08-07: 134 s** — the p95 of 630 samples across 10 ISPs, with a
+total spread of 1.0 second (min 133.0, median 133.5, max 134.0, σ 0.29). The
+field is enabled and `available_at` now serves it. Provenance is recorded
+inline in `config/market_rules.yaml` under `lag_measurement`.
 
-The lag is therefore still `null` in config (`lag_confidence: unresolved`),
-and this is a *state*, not a dead end: Phase 1 measures it from the data once
-registered. Until then no feature may be built from balance delta. If the
-measurement proves noisy or time-varying in a way we cannot pin down, every
-revenue figure inherits that uncertainty and it must be reported as a
-sensitivity, not hidden in a point estimate.
+**Coverage is the live weakness.** 2.18 hours of a single weekday afternoon
+(12:15–14:25 UTC). Not observed: overnight, weekends, or scarcity and
+high-volatility periods — which are exactly the conditions where a battery
+earns most, and where a TSO is most likely to intervene. TenneT's own API
+documentation describes the delay as *configurable*, i.e. a knob they set, so
+stability over two hours is not evidence of stability over a year.
+**Re-measure across a full 24 h before any headline revenue figure depends on
+this**, and again after any announced TenneT platform change.
+
+**Granularity is a second, quieter cost.** Balance delta publishes every 12
+seconds, but availability is answered at ISP granularity — the whole ISP is
+reported as arriving 134 s after the ISP *ends*. That is conservative and
+therefore safe under R1, but it discards up to ~12.8 minutes of the previous
+ISP's intra-period shape, and intra-ISP shape is precisely what determines the
+regulation state. So the conservatism bites hardest on the T1 classification
+target. Point-level availability (`point_end + lag`) is a Phase 2 task
+(ADR-021).
+
+**On the trade press.** The widely-repeated "2 minutes" turns out close to
+right as a *current* value. The 3 → 5 → 2 minute *timeline* remains unsupported
+by any primary source, and this measurement says nothing about historical
+values — so a backtest over 2024–25 still has no measured lag for its own
+period, and must either treat that as a sensitivity or restrict itself.
 
 ### The regulation state changed meaning on 2026-02-03
 From 3 February 2026 TenneT determines the regulation state from the 12-second

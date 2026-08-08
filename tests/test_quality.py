@@ -343,3 +343,79 @@ def test_build_quality_report_refuses_to_write_from_empty_data(
         bqr.build()
 
     assert not out.exists()
+
+
+# --- dual-price share: a rigorous LOWER BOUND on regulation state 2 ----------
+
+
+def test_dual_price_share_counts_periods_where_the_two_prices_differ() -> None:
+    from src.data.quality import dual_price_share
+
+    idx = pd.date_range("2026-06-01", periods=4, freq="15min", tz="UTC")
+    df = pd.DataFrame(
+        {"price_long": [10.0, 10.0, -5.0, 20.0], "price_short": [10.0, 30.0, 40.0, 20.0]},
+        index=idx,
+    )
+    assert dual_price_share(df) == 0.5
+
+
+def test_dual_price_share_is_a_lower_bound_not_an_equality() -> None:
+    """States 0/+1/-1 always have price_long == price_short. State 2 usually
+    differs -- but a FULLY reverse-priced state-2 period collapses both legs to
+    the mid-price and is indistinguishable here. So this undercounts state 2
+    and must never be reported as its exact frequency."""
+    from src.data.quality import dual_price_share
+
+    idx = pd.date_range("2026-06-01", periods=2, freq="15min", tz="UTC")
+    reverse_priced_state_2 = pd.DataFrame(
+        {"price_long": [30.0, 30.0], "price_short": [30.0, 30.0]}, index=idx
+    )
+    assert dual_price_share(reverse_priced_state_2) == 0.0
+
+
+def test_dual_price_share_ignores_floating_point_noise() -> None:
+    from src.data.quality import dual_price_share
+
+    idx = pd.date_range("2026-06-01", periods=1, freq="15min", tz="UTC")
+    df = pd.DataFrame({"price_long": [10.0], "price_short": [10.0 + 1e-12]}, index=idx)
+    assert dual_price_share(df) == 0.0
+
+
+def test_dual_price_break_report_splits_on_the_structural_break_date() -> None:
+    from src.data.quality import dual_price_break_report
+
+    before = pd.date_range("2026-01-01", periods=4, freq="15min", tz="UTC")
+    after = pd.date_range("2026-03-01", periods=4, freq="15min", tz="UTC")
+    df = pd.concat(
+        [
+            pd.DataFrame({"price_long": [1.0] * 4, "price_short": [1.0] * 4}, index=before),
+            pd.DataFrame({"price_long": [1.0] * 4, "price_short": [9.0] * 4}, index=after),
+        ]
+    )
+    out = dual_price_break_report(df)
+    row = out[out["date"].astype(str).str.startswith("2026-02-03")].iloc[0]
+    assert row["dual_share_before"] == 0.0
+    assert row["dual_share_after"] == 1.0
+
+
+def test_dual_price_break_report_skips_breaks_the_data_does_not_span() -> None:
+    from src.data.quality import dual_price_break_report
+
+    idx = pd.date_range("2026-06-01", periods=4, freq="15min", tz="UTC")
+    df = pd.DataFrame({"price_long": [1.0] * 4, "price_short": [1.0] * 4}, index=idx)
+    out = dual_price_break_report(df)
+    assert "2020-07-31" not in out["date"].astype(str).tolist()
+
+
+def test_settlement_invariant_holds_flags_violations() -> None:
+    """price_short >= price_long is an invariant of the settlement rules. If
+    real data ever violates it, either the columns are swapped or the rules
+    changed -- both are data-quality emergencies, not curiosities."""
+    from src.data.quality import settlement_invariant_violations
+
+    idx = pd.date_range("2026-06-01", periods=3, freq="15min", tz="UTC")
+    ok = pd.DataFrame({"price_long": [1.0, 2.0, 3.0], "price_short": [1.0, 5.0, 3.0]}, index=idx)
+    assert settlement_invariant_violations(ok) == 0
+
+    bad = pd.DataFrame({"price_long": [9.0, 2.0, 3.0], "price_short": [1.0, 5.0, 3.0]}, index=idx)
+    assert settlement_invariant_violations(bad) == 1

@@ -37,7 +37,8 @@ agreement, no paid tier observed at this stage.
 The portal lists ten APIs. Four matter to this project:
 
 - **Balance Delta High Res** — the intra-ISP signal whose publication lag is
-  currently unmeasured (see `LIMITATIONS.md` and `docs/DOMAIN_NOTES.md` Q7).
+  measured at 134 s on 2026-08-07 (630 samples); see `LIMITATIONS.md` for the
+  coverage caveat and `docs/DECISIONS.md` ADR-020.
 - **Settlement prices** — imbalance price per settlement period.
 - **Settled imbalance volumes**.
 - **Merit Order List aFRR & mFRRsa** — the bid ladder.

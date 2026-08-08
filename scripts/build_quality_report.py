@@ -9,9 +9,10 @@ there is no data at all is "not yet measured", which is what
 docs/DATA_QUALITY.md says as a placeholder until this script actually runs
 against real cached data.
 
-STATUS 2026-08-06: no ENTSO-E token or TenneT registration exists yet (see
-docs/DATA_SOURCES.md), so nothing is cached under data/processed/ and running
-this script today exits via the guard below rather than writing the doc.
+STATUS 2026-08-08: credentials are working and 26,208 ISPs of NL imbalance
+prices are cached, so this script now writes a real report. The empty-cache
+guard below remains: it is what makes a clean checkout fail loudly rather than
+publish an empty report that reads as "zero issues found".
 
     uv run python scripts/build_quality_report.py [--dataset NAME]
 """
@@ -33,9 +34,12 @@ import pandas as pd
 
 from src.data.cache import read_frame
 from src.data.quality import (
+    dual_price_break_report,
+    dual_price_share,
     duplicate_report,
     gap_report,
     regulation_state_distribution,
+    settlement_invariant_violations,
     structural_break_check,
 )
 
@@ -92,8 +96,44 @@ def build(dataset: str = "imbalance_prices") -> None:
         )
     else:
         sections.append(
-            "## Regulation state distribution / structural breaks\n\n"
-            "_skipped: no `regulation_state` column in this dataset_\n"
+            "## Regulation state distribution\n\n"
+            "_Skipped: this dataset has no `regulation_state` column. The settled "
+            "ENTSO-E feed publishes the two prices but not the state, so the "
+            "dual-price analysis below stands in for it._\n"
+        )
+
+    if {"price_long", "price_short"} <= set(df.columns):
+        violations = settlement_invariant_violations(df)
+        sections.append(
+            "## Settlement invariant\n\n"
+            "`price_short >= price_long` follows from Table 2 for every regulation "
+            "state: a BRP can never be paid more for being long than it is charged "
+            "for being short in the same period. A non-zero count means the columns "
+            "are swapped or the settlement rules have changed.\n\n"
+            f"**Violations: {violations} of {len(df)} ISPs.**\n"
+        )
+        sections.append(
+            "## Dual pricing\n\n"
+            f"**{dual_price_share(df):.1%} of {len(df)} ISPs are dual-priced** "
+            "(`price_long != price_short`).\n\n"
+            "This is a rigorous **lower bound** on the frequency of regulation state "
+            "2, not its exact value: states 0/+1/-1 always price both sides "
+            "identically, so a difference implies state 2 — but a fully "
+            "reverse-priced state-2 period collapses both legs to the mid-price and "
+            "is counted here as single-priced.\n"
+        )
+        sections.append(
+            "## Structural breaks — dual-price share before/after\n\n"
+            "ADR-007 predicts the state-2 share RISES at 2026-02-03, when TenneT "
+            "switched the regulation-state input from the 1-minute to the 12-second "
+            "balance delta (15 → 75 samples per ISP), with no change in the physical "
+            "system. Reported plainly whichever way it goes: if it did not rise, "
+            "ADR-007's reasoning is wrong and must be corrected rather than "
+            "explained away.\n\n"
+            "**Confounded with season** — these windows span winter to summer, so a "
+            "rise is consistent with the mechanism but does not demonstrate it "
+            "(ADR-016).\n\n"
+            f"{_body(dual_price_break_report(df))}\n"
         )
 
     OUT.write_text("\n".join(sections), encoding="utf-8")
