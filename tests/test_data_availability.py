@@ -97,9 +97,26 @@ def test_settled_imbalance_price_is_not_available_same_day() -> None:
 
 
 def test_unresolved_lag_refuses_rather_than_defaulting() -> None:
-    """ADR-006. balance_delta must REFUSE, never fall back to a guess."""
-    with pytest.raises(UnresolvedLagError, match="balance_delta"):
-        available_at("balance_delta", ISP)
+    """ADR-006. An unresolved lag must REFUSE, never fall back to a guess.
+
+    `balance_delta` was the original subject of this test; its lag was measured
+    on 2026-08-07 (ADR-019) so it no longer refuses. `activated_balancing_volumes`
+    is still unresolved and carries the invariant now. The rule is about the
+    mechanism, not about any one field.
+    """
+    with pytest.raises(UnresolvedLagError, match="activated_balancing_volumes"):
+        available_at("activated_balancing_volumes", ISP)
+
+
+def test_at_least_one_field_still_exercises_the_refusal_path() -> None:
+    """Guard against the refusal mechanism silently becoming dead code: if every
+    field ever becomes resolved, this fails and whoever did it must decide
+    deliberately whether to delete the mechanism or keep a synthetic case."""
+    unresolved = [f for f, s in load_rules()["publication"].items() if s["rule"] == "unresolved"]
+    assert unresolved, (
+        "No field is unresolved any more, so the UnresolvedLagError path is "
+        "untested by real config. Keep a case or remove the mechanism knowingly."
+    )
 
 
 def test_unknown_field_raises() -> None:

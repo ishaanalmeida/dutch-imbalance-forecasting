@@ -580,3 +580,65 @@ that TenneT can reconfigure it, and a value measured at midday is not evidence
 about 03:00. The field stays `unresolved` until a run of at least two hours.
 Writing a plausible number early is precisely the failure this project is built
 to avoid.
+
+## ADR-020 — balance-delta lag measured at 134 s; field enabled
+
+**630 samples, 10 ISPs, 2026-08-07 12:15–14:25 UTC.**
+
+| | seconds |
+|---|---|
+| min | 133.0 |
+| median | 133.5 |
+| **p95 (encoded)** | **134.0** |
+| max | 134.0 |
+| stdev | 0.29 |
+
+Total range across 630 samples is **1.0 second**. That is consistent with a
+deterministic configured constant rather than a noisy pipeline — which matches
+ADR-017's finding that the delay is a knob TenneT sets.
+
+`rule` moves from `unresolved` to `lag_after_period`, `lag_confidence` to
+`measured`, and `available_at` now serves the field. Full provenance —
+method, script, window, sample count, and the p95-not-median rationale — is
+recorded inline in `config/market_rules.yaml`.
+
+**On the trade press.** The widely-repeated "2 minutes" is close to right as a
+*current value* (133.5 s median). ADR-006 was still correct to withdraw it: the
+3 → 5 → 2 minute *timeline* remains unsupported by anything primary, and this
+measurement says nothing whatsoever about historical values. We now have our
+own number for today, not a reconstructed history.
+
+**Coverage limitation — the reason this is not finished.** 2.18 hours of one
+weekday afternoon. Not observed: overnight, weekends, or scarcity periods —
+which is exactly when a battery earns most and when a TSO is most likely to
+intervene. Re-measure across a full 24 h before any headline revenue figure
+depends on this, and again after any TenneT platform change. Recorded in the
+config as `lag_coverage_caveat` and in `LIMITATIONS.md`.
+
+## ADR-021 — ISP-level availability for a sub-ISP signal is deliberately conservative
+
+Balance delta publishes every **12 seconds**, but `lag_after_period` answers at
+ISP granularity: it reports the whole of ISP *t* as arriving 134 s after *t*
+**ends**. In reality each 12-second point arrives 134 s after *that point*
+ends, so most of ISP *t−1* is visible well before this rule admits.
+
+**Decision: keep the ISP-level rule as the default.** It can only ever withhold
+information, never grant it early, so it is safe under R1 — and a wrong answer
+in the safe direction is recoverable, while a wrong answer in the permissive
+direction is the failure this whole layer exists to prevent.
+
+**Cost, stated plainly.** The default discards up to ~12.8 minutes of the
+previous ISP's intra-period signal — and intra-ISP balance-delta shape is
+precisely what determines the regulation state (whether the series is monotonic
+or not). So this conservatism bites hardest on the T1 classification target.
+
+**Next step, for the Phase 2 feature builder:** point-level availability,
+`point_end + lag`, rather than the ISP-level answer. That needs a per-point
+signature, not `available_at(field, isp)`. Pinned by
+`test_balance_delta_isp_level_availability_is_deliberately_conservative` so the
+limitation is a recorded decision rather than something discovered later.
+
+**Also worth knowing:** even at ISP level the newest usable balance delta at
+decision time is **t−2**, not t−1 — t−1 ends exactly at the decision instant
+and publishes 134 s after it. Same shape as the real-time price estimate, and
+for the same reason.

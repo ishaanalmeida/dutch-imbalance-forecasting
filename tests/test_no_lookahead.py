@@ -71,12 +71,64 @@ def test_two_isps_back_realtime_estimate_is_available() -> None:
     assert is_available("imbalance_price_realtime_estimate", two_back, DECISION)
 
 
-def test_balance_delta_refuses_in_both_directions() -> None:
+def test_an_unresolved_lag_still_blocks_use_in_both_directions() -> None:
     """Unresolved lag must block use, not merely warn — for any ISP, past or
-    present. ADR-006."""
+    present. ADR-006.
+
+    `balance_delta` held this role until its lag was measured (ADR-019);
+    `activated_balancing_volumes` is still unresolved and carries it now.
+    """
     for offset in (-timedelta(days=30), timedelta(0), timedelta(days=30)):
         with pytest.raises(UnresolvedLagError):
-            is_available("balance_delta", ISP + offset, DECISION)
+            is_available("activated_balancing_volumes", ISP + offset, DECISION)
+
+
+def test_balance_delta_respects_its_measured_lag() -> None:
+    """Measured p95 = 134 s from the END of the period (ADR-019).
+
+    Consequence worth stating: the balance delta for ISP t-1 publishes 134 s
+    AFTER t-1 ends — i.e. 134 s into ISP t — so it is NOT available at the
+    decision instant for t. The newest usable ISP-level balance delta is t-2.
+    Same shape as the real-time price estimate, and for the same reason.
+    """
+    spec = load_rules()["publication"]["balance_delta"]
+    assert spec["lag_confidence"] == "measured", "lag must be measured, never assumed"
+    assert spec["lag_seconds"] == 134
+
+    # Its own ISP: obviously not available at that ISP's start.
+    assert not is_available("balance_delta", ISP, DECISION)
+
+    # The immediately previous ISP: ends exactly at DECISION, publishes 134 s later.
+    previous = ISP - timedelta(minutes=15)
+    assert available_at("balance_delta", previous) == DECISION + timedelta(seconds=134)
+    assert not is_available("balance_delta", previous, DECISION)
+
+    # Two ISPs back: ends 15 min before DECISION, so visible with ~13 min to spare.
+    two_back = ISP - timedelta(minutes=30)
+    assert is_available("balance_delta", two_back, DECISION)
+
+
+def test_balance_delta_isp_level_availability_is_deliberately_conservative() -> None:
+    """balance_delta is a 12-SECOND signal, but `lag_after_period` answers at
+    ISP granularity: it reports the whole ISP as arriving 134 s after the ISP
+    ends. In reality each 12 s point arrives 134 s after that POINT ends, so
+    most of ISP t-1 is visible well before this rule admits.
+
+    That is conservative — it can only ever withhold information, never grant
+    it early — so it is safe under R1 and is the right default. It does cost
+    real signal, and the feature builder will want point-level availability
+    (`point_end + lag`) rather than this ISP-level answer. Pinned so the
+    conservatism is a recorded decision rather than an unnoticed limitation.
+    """
+    spec = load_rules()["publication"]["balance_delta"]
+    assert spec["cadence_seconds"] == 12, "sub-ISP cadence is what makes this conservative"
+
+    previous = ISP - timedelta(minutes=15)
+    isp_level = available_at("balance_delta", previous)
+    # A point ending one cadence tick into t-1 would really be visible here:
+    earliest_point_end = previous + timedelta(seconds=spec["cadence_seconds"])
+    point_level = earliest_point_end + timedelta(seconds=spec["lag_seconds"])
+    assert point_level < isp_level, "ISP-level answer should be the later, safer one"
 
 
 def test_availability_is_monotonic_in_target_period() -> None:

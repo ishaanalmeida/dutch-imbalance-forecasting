@@ -189,36 +189,68 @@ price_limits:
 # from first publication — R1 requires the FIRST-PUBLISHED vintage.
 publication:
   balance_delta:
-    rule: unresolved            # lag must be MEASURED (ADR-006), not assumed
+    # MEASURED 2026-08-07. Was `unresolved` from Phase 0 until then, because no
+    # primary source publishes the value -- see lag_measurement below and
+    # docs/DECISIONS.md ADR-006, ADR-017, ADR-019.
+    rule: lag_after_period
+
     # CADENCE and DELAY are different things and must not be conflated.
     #   cadence = how often a new value is published
     #   lag     = how long after the instant it describes it becomes visible
-    # TenneT's published changes in 2025-26 are all CADENCE changes. TenneT's
-    # own methodology document describes no multi-minute delay at all.
+    # TenneT's published 2025-26 changes are all CADENCE changes.
     cadence_seconds: 12          # from 2025-11-25; 60 before that
     cadence_confidence: primary
     cadence_source: "TenneT news, 'Balance delta now published every 12 seconds', 25 Nov 2025"
 
-    lag_seconds: null            # DELIBERATELY UNSET — see below
-    lag_confidence: unresolved
-    lag_source: >
-      [IPS61] fn.16 is the only primary statement on balance-delta timing: the
-      table "shows these quantities, approximately halfway each minute, together
-      with the prices of the pricesetting bids." That describes a ~30s
-      within-minute publication point, NOT a multi-minute delay.
+    lag_seconds: 134             # p95 of 630 measured samples, rounded up
+    lag_confidence: measured
+    lag_measurement:
+      method: >
+        Polled https://api.tennet.eu/publications/v1/balance-delta-high-res/latest
+        at TenneT's recommended cadence (5x/min, 1s after each 12s refresh).
+        lag = first_seen - point.timeInterval_end. The interval END is used
+        because a point covers [start, end) and is only complete at end; using
+        start would understate every lag by one 12s tick.
+      script: scripts/measure_balance_delta_lag.py
+      samples: 630
+      isps_spanned: 10
+      observed_from: "2026-08-07T12:15Z"
+      observed_to: "2026-08-07T14:25Z"
+      min_seconds: 133.0
+      median_seconds: 133.5
+      p95_seconds: 134.0
+      max_seconds: 134.0
+      stdev_seconds: 0.29
+      encoded_value: 134
+      why_p95_not_median: >
+        A median lag would grant look-ahead on half the observations. p95 is
+        the honest choice for R1; here p95 and max coincide anyway.
+      known_bias: >
+        Biased UP by 0-12s: we poll every 12s, so a point can sit published for
+        up to one poll interval before we see it. Conservative for R1 -- it can
+        never make data look available earlier than it truly was.
+      confirms: >
+        The trade-press "2 minute" figure is close to correct as a CURRENT
+        value (measured 133.5s median). The 3->5->2 minute TIMELINE remains
+        unsubstantiated; this measurement says nothing about historical values.
 
-      Trade press reports a 3 -> 5 -> 2 minute publication-DELAY timeline across
-      2024-25. No TenneT page reviewed supports it, and TenneT's "Market update
-      at a glance" of 2025-10-28 lists delaying balance-delta price information
-      as an OPTION with "no concrete plans". The reports may be conflating
-      cadence with delay. Treat the delay timeline as UNSUBSTANTIATED.
-
-      RESOLUTION PATH (Phase 1): do not encode a number from documentation.
-      MEASURE the lag empirically by comparing each observation's own
-      publication timestamp against the instant it describes, then write the
-      measured, possibly time-varying, lag back into this file with evidence.
-      Until that is done, data_availability.available_at() MUST refuse to serve
-      this field rather than default to a guess.
+    # ---- COVERAGE LIMITATION. Read before trusting this for a backtest. ----
+    lag_coverage_caveat: >
+      Measured across 2.18 hours of a single weekday afternoon (12:15-14:25
+      UTC). NOT observed: overnight, weekends, or scarcity/high-volatility
+      periods -- exactly the conditions where a battery earns most and where a
+      TSO is most likely to intervene. ADR-017 established from TenneT's own
+      API docs that the delay is "configurable", i.e. a knob they turn.
+      The 630 samples span only 1.0 second end to end (stdev 0.29s), which is
+      consistent with a deterministic configured constant rather than a noisy
+      pipeline -- but that is evidence about this window, not about all windows.
+      RE-MEASURE across a full 24h before any headline revenue figure depends
+      on it, and re-measure again if TenneT announces a platform change.
+    lag_history:
+      - from: "2026-08-07"
+        lag_seconds: 134
+        confidence: measured
+        note: "First empirical measurement. No earlier value was ever established."
     revised: false
     time_varying: unknown
     note: >
