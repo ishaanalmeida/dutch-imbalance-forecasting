@@ -706,3 +706,66 @@ recorded in LIMITATIONS.md.
 further back than the window you are arguing about. I had 9 months cached and
 formed a conclusion; 5 years of one-week-per-quarter samples reversed it for
 about twenty API calls.
+
+---
+
+## ADR-023 — Task 5 feature builder: `day_ahead_price` made unconditional; live availability enforcement remains open
+
+**`day_ahead_price` catalogue/column mismatch.** The Task 5 brief's
+`build_features` only wrote a `day_ahead_price` column when a `day_ahead`
+series was passed, but `CATALOGUE` never listed it — so the mandatory
+"built columns match the catalogue exactly" test would fail the moment a
+caller omitted `day_ahead`, and `DayAheadBaseline` (`src/models/baselines.py`),
+which unconditionally reads `X["day_ahead_price"]`, would `KeyError` whenever
+it was.
+
+**Decision.** Added a `day_ahead_price` entry to `CATALOGUE` and made the
+column unconditional: `build_features` always emits it, NaN-filled when no
+`day_ahead` series is supplied. Chosen over the alternative (keep it
+conditional, carve it out of the columns-match test) because it requires no
+test weakening, keeps the emitted column set a pure function of the
+catalogue with no caller-dependent branching, and gives `DayAheadBaseline` a
+column that always exists rather than one that exists only if the caller
+remembered to pass day-ahead data.
+
+**Separately — a real, unresolved R1 tension, not this task's bug to fix.**
+The Task 5 brief's own "Interfaces" line and its module docstring claim the
+builder "asks `data_availability` for permission per field per period, so a
+leaking feature is impossible by construction", and lists `assert_available`,
+`available_vintages` and a `decision_offset` parameter as consumed. The
+brief's actual `build_features` code implements none of this — no
+`assert_available` call exists anywhere in the module, and `decision_offset`
+was dropped from the signature. This is not an oversight I could silently
+patch: wiring `assert_available` in at the canonical ISP-start decision time
+(`ADR-005`, restated in `tests/test_no_lookahead.py`) against the catalogue's
+current `source_field` choice would raise `LookAheadError` on nearly every
+row of `lag_price_short_1`, and on every row before ~10:00 local for
+`lag_price_short_96`. Reason: `imbalance_price_settled` publishes once daily
+at D+1 10:00 (`config/market_rules.yaml`, which annotates it *"the TARGET
+variable, never a feature"*), so a 1-ISP or 1-day shift of it does not
+correspond to genuinely-available information at ISP-start decision time —
+unlike, say, `imbalance_price_realtime_estimate` (lag_after_period, ~120 s),
+which the config explicitly marks *"Usable as a feature."*
+
+This mirrors ADR-021's own conclusion: it already named "point-level
+availability... for the Phase 2 feature builder" as a **next step**, not
+something already done. Task 6's self-review table nonetheless lists
+"Availability enforcement in the builder" as delivered by Task 5 — that line
+is aspirational against the brief's own sample code, not yet true against
+what ships here.
+
+**Resolution taken here.** Implemented Task 5 as specified: the catalogue
+records `source_field` and `lag_isps` as documentation (rendered to
+`docs/FEATURES.md`); the builder does not call `assert_available` per row.
+Left open rather than silently fixed in either direction, because closing it
+requires a modelling decision outside this task's scope — CLAUDE.md §11: "Ask
+before... making a domain assumption that materially changes results." Two
+live options for whoever picks this up: (a) point-level `assert_available`
+wiring against the *current* catalogue, which will force re-sourcing
+`lag_price_short_1`/`lag_price_short_96` off `imbalance_price_realtime_estimate`
+or a longer, genuinely-available lag; or (b) leave `build_features` as a pure
+in-memory transform for offline training (where the walk-forward purge gap is
+the leak defence) and enforce `assert_available` only at the Phase 4 backtest
+/ live-inference boundary, where the real decision timestamp is known. Not
+resolved here — flagged for explicit review before this builder's output is
+used for anything beyond the Phase 2a baseline comparison (Task 6).
