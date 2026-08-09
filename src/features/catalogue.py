@@ -21,23 +21,41 @@ class FeatureSpec:
 
 CATALOGUE: tuple[FeatureSpec, ...] = (
     FeatureSpec(
-        name="lag_price_short_1",
-        source_field="imbalance_price_settled",
-        lag_isps=1,
-        rationale=(
-            "Most recent settled short price. Imbalance prices are strongly "
-            "autocorrelated at short lags, so this is the single most "
-            "informative cheap feature and the persistence baseline's input."
-        ),
-    ),
-    FeatureSpec(
         name="lag_price_short_96",
         source_field="imbalance_price_settled",
         lag_isps=96,
         rationale=(
             "Same ISP yesterday. Captures the daily shape of demand and "
-            "renewable output that repeats across days, and is the seasonal "
-            "naive baseline's input."
+            "renewable output that repeats across days. Settlement publishes "
+            "once daily at D+1 10:00 (config/market_rules.yaml), so this is "
+            "only available for decisions taken after ~10:00 local -- masked "
+            "to NaN for the rest (ADR-023). Never contemporaneous."
+        ),
+    ),
+    FeatureSpec(
+        name="lag_price_short_192",
+        source_field="imbalance_price_settled",
+        lag_isps=192,
+        rationale=(
+            "Same ISP two days back. The D+1 10:00 settlement rule means a "
+            "two-day-old settled price is always available, whatever the "
+            "decision time's hour-of-day -- the freshest settled lag that "
+            "needs no availability mask, anchoring the feature set even for "
+            "early-morning decisions when lag_price_short_96 is masked "
+            "(ADR-023)."
+        ),
+    ),
+    FeatureSpec(
+        name="lag_price_short_freshest",
+        source_field="imbalance_price_settled",
+        lag_isps=96,
+        rationale=(
+            "The most recent settled price actually visible at decision "
+            "time: lag_price_short_96 where the 10:00 settlement run has "
+            "already posted it, else lag_price_short_192, which is always "
+            "available. This is the honest 'last observed value' and what a "
+            "persistence baseline genuinely has -- a plain one-ISP lag is "
+            "never available in this market and was removed (ADR-023)."
         ),
     ),
     FeatureSpec(
@@ -46,17 +64,20 @@ CATALOGUE: tuple[FeatureSpec, ...] = (
         lag_isps=672,
         rationale=(
             "Same ISP last week. Captures day-of-week structure -- weekend "
-            "load and industrial demand differ systematically from weekdays."
+            "load and industrial demand differ systematically from weekdays. "
+            "Always available at decision time regardless of hour-of-day."
         ),
     ),
     FeatureSpec(
-        name="lag_spread_1",
+        name="lag_spread_96",
         source_field="imbalance_price_settled",
-        lag_isps=1,
+        lag_isps=96,
         rationale=(
-            "Previous ISP's long-short gap. Non-zero means the previous period "
-            "was dual-priced, and dual pricing clusters: state 2 arises from "
-            "intra-period volatility, which persists across period boundaries."
+            "Yesterday's same-ISP long-short gap, masked by the same D+1 "
+            "10:00 settlement rule as the price lags above. Non-zero means "
+            "that ISP was dual-priced, and dual pricing clusters, so it "
+            "remains informative a full day lagged; the previous-ISP version "
+            "was never available and was removed (ADR-023)."
         ),
     ),
     FeatureSpec(

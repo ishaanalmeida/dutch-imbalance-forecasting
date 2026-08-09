@@ -101,3 +101,37 @@ def test_catalogue_markdown_documents_every_feature() -> None:
     for spec in CATALOGUE:
         assert spec.name in md
         assert spec.rationale[:30] in md
+
+
+def test_no_catalogued_feature_is_ever_unavailable_for_every_row() -> None:
+    """A feature that is NaN everywhere is not conservative, it is broken --
+    and lag_price_short_1 was exactly that before this fix.
+
+    day_ahead_price is the one column that is legitimately all-NaN when no
+    day_ahead series is supplied at all (ADR-023): that is a caller omitting
+    an optional input, not an impossible feature, so it is supplied here.
+    """
+    prices = _prices(96 * 30)
+    day_ahead = pd.Series(50.0, index=prices.index)
+    out = build_features(prices, day_ahead=day_ahead)
+    for col in out.columns:
+        assert out[col].notna().any(), f"{col} is unavailable for every row"
+
+
+def test_same_day_settled_price_is_never_used() -> None:
+    """Settled prices publish D+1 10:00, so no settled value from the target's
+    own delivery day can ever be a feature."""
+    from datetime import timedelta
+
+    from src.data.data_availability import is_available
+
+    isp = pd.Timestamp("2026-06-17 12:00", tz="UTC").to_pydatetime()
+    assert not is_available("imbalance_price_settled", isp - timedelta(minutes=15), isp)
+
+
+def test_yesterdays_price_is_masked_before_the_settlement_run() -> None:
+    """Available for afternoon decisions, not early-morning ones. The mask is
+    the point: ~43% of rows genuinely cannot see it."""
+    out = build_features(_prices(96 * 5))
+    col = out["lag_price_short_96"].dropna()
+    assert 0 < len(col) < len(out), "expected a partial mask, not all-or-nothing"

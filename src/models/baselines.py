@@ -32,13 +32,22 @@ def _broadcast(point: FloatArray, n_quantiles: int) -> FloatArray:
 
 
 class PersistenceBaseline:
-    """Last observed settled value, carried forward."""
+    """Last observed settled value, carried forward.
+
+    "Last observed" means last *available*: settled prices publish once
+    daily at D+1 10:00, so the freshest settled value a decision at ISP start
+    can ever see is 1-2 days old, never one ISP old (ADR-023). That is a
+    property of this market's settlement mechanics, not a weakness of the
+    baseline -- reads `lag_price_short_freshest`, which is exactly that
+    freshest-available value, already masked to NaN where nothing is yet
+    known.
+    """
 
     def fit(self, X: pd.DataFrame, y: pd.Series[Any]) -> None:
         self._fitted = True
 
     def predict_quantiles(self, X: pd.DataFrame, quantiles: tuple[float, ...]) -> FloatArray:
-        return _broadcast(X["lag_price_short_1"].to_numpy(dtype=float), len(quantiles))
+        return _broadcast(X["lag_price_short_freshest"].to_numpy(dtype=float), len(quantiles))
 
 
 class SeasonalNaiveBaseline:

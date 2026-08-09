@@ -1,19 +1,17 @@
 """Assemble the feature matrix.
 
 RIGOUR ZONE. This module carries Phase 1's availability enforcement into
-Phase 2 -- see docs/DECISIONS.md ADR-023 for the current, honestly-stated
-scope: the catalogue records each feature's `source_field` and `lag_isps` as
-documentation (rendered into docs/FEATURES.md), but this builder does not yet
-call `src.data.data_availability.assert_available` per row. ADR-021 already
-flagged point-level availability enforcement as the feature builder's "next
-step"; it remains open. Wiring it in naively, at the canonical ISP-start
-decision time (ADR-005), would reject `lag_price_short_1` (and
-`lag_price_short_96` before ~10:00 local) on nearly every row, because
-`imbalance_price_settled` publishes once daily at D+1 10:00 and
-config/market_rules.yaml marks it "the TARGET variable, never a feature" --
-that is a real, unresolved R1 tension in the catalogue's current choice of
-source field, not a bug in this module, and it must be closed before this
-builder's output is trusted for a live decision or a Phase 4 backtest.
+Phase 2 -- see docs/DECISIONS.md ADR-023. Every settled-price-derived lag is
+masked to NaN per row, per `src.data.data_availability.is_available`, at the
+canonical ISP-start decision time (ADR-005): `imbalance_price_settled`
+publishes once daily at D+1 10:00 (config/market_rules.yaml), so a naive
+one-ISP lag is *never* available (removed from the catalogue entirely) and
+`lag_price_short_96` (yesterday, same ISP) is only available for decisions
+taken after ~10:00 local -- roughly 43% of ISPs are masked. NaN is the
+truthful encoding of "not yet known", not an error: unavailability is a
+legitimate per-row state here, so masking never raises. A catalogue entry
+naming a `source_field` that `data_availability` has no basis to serve at all
+(`UnresolvedLagError`) is a different, genuine bug and is left to propagate.
 
 Lags are expressed in ISPs and applied by shifting, which is safe because the
 index is a complete, gap-free UTC ISP grid (verified: docs/DATA_QUALITY.md
@@ -25,15 +23,19 @@ it fail silently.
 
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Any, cast
 
 import numpy as np
 import pandas as pd
 
+from src.data.data_availability import is_available
 from src.data.timebase import ISP_MINUTES
 from src.features.catalogue import CATALOGUE, FeatureSpec
 
 __all__ = ["CATALOGUE", "FeatureSpec", "build_features", "render_catalogue_markdown"]
+
+_SETTLED = "imbalance_price_settled"
 
 
 def _require_aware(df: pd.DataFrame) -> pd.DataFrame:
@@ -60,6 +62,34 @@ def _require_gapfree_grid(idx: pd.DatetimeIndex) -> None:
         )
 
 
+def _availability_mask(idx: pd.DatetimeIndex, field: str, lag_isps: int) -> pd.Series[bool]:
+    """True where `field`, `lag_isps` ISPs before each row's own ISP, was
+    genuinely retrievable strictly before that row's decision time (ISP
+    start, ADR-005). One `is_available` call per row: cheap relative to the
+    dataset sizes here, and the honest way to answer a question whose answer
+    depends on each row's own wall-clock date.
+
+    Lets `UnresolvedLagError` propagate rather than catching it: a catalogue
+    entry naming a field `data_availability` refuses outright is a catalogue
+    bug, not a per-row state to mask away.
+    """
+    step = timedelta(minutes=ISP_MINUTES)
+    mask = [
+        is_available(field, (ts - lag_isps * step).to_pydatetime(), ts.to_pydatetime())
+        for ts in idx
+    ]
+    return pd.Series(mask, index=idx, dtype=bool)
+
+
+def _masked_lag(
+    series: pd.Series[float], idx: pd.DatetimeIndex, field: str, lag_isps: int
+) -> pd.Series[float]:
+    """`series` shifted by `lag_isps`, with rows the decision could not yet
+    see forced to NaN on top of whatever `shift` already leaves NaN."""
+    shifted = series.shift(lag_isps)
+    return shifted.where(_availability_mask(idx, field, lag_isps))
+
+
 def build_features(prices: pd.DataFrame, day_ahead: pd.Series[Any] | None = None) -> pd.DataFrame:
     """Build every catalogued feature for the given price history.
 
@@ -77,10 +107,13 @@ def build_features(prices: pd.DataFrame, day_ahead: pd.Series[Any] | None = None
     short = prices["price_short"].astype(float)
     spread = (prices["price_long"] - prices["price_short"]).abs().astype(float)
 
-    out["lag_price_short_1"] = short.shift(1)
-    out["lag_price_short_96"] = short.shift(96)
-    out["lag_price_short_672"] = short.shift(672)
-    out["lag_spread_1"] = spread.shift(1)
+    out["lag_price_short_96"] = _masked_lag(short, idx, _SETTLED, 96)
+    out["lag_price_short_192"] = _masked_lag(short, idx, _SETTLED, 192)
+    out["lag_price_short_freshest"] = out["lag_price_short_96"].where(
+        out["lag_price_short_96"].notna(), out["lag_price_short_192"]
+    )
+    out["lag_price_short_672"] = _masked_lag(short, idx, _SETTLED, 672)
+    out["lag_spread_96"] = _masked_lag(spread, idx, _SETTLED, 96)
 
     hour = idx.hour.to_numpy(dtype=float)
     dow = idx.dayofweek.to_numpy(dtype=float)

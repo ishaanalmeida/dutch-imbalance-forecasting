@@ -709,7 +709,7 @@ about twenty API calls.
 
 ---
 
-## ADR-023 — Task 5 feature builder: `day_ahead_price` made unconditional; live availability enforcement remains open
+## ADR-023 — Task 5 feature builder: `day_ahead_price` made unconditional; `lag_price_short_1` removed as impossible, availability now enforced per row
 
 **`day_ahead_price` catalogue/column mismatch.** The Task 5 brief's
 `build_features` only wrote a `day_ahead_price` column when a `day_ahead`
@@ -754,18 +754,83 @@ something already done. Task 6's self-review table nonetheless lists
 is aspirational against the brief's own sample code, not yet true against
 what ships here.
 
-**Resolution taken here.** Implemented Task 5 as specified: the catalogue
-records `source_field` and `lag_isps` as documentation (rendered to
-`docs/FEATURES.md`); the builder does not call `assert_available` per row.
-Left open rather than silently fixed in either direction, because closing it
-requires a modelling decision outside this task's scope — CLAUDE.md §11: "Ask
-before... making a domain assumption that materially changes results." Two
-live options for whoever picks this up: (a) point-level `assert_available`
-wiring against the *current* catalogue, which will force re-sourcing
-`lag_price_short_1`/`lag_price_short_96` off `imbalance_price_realtime_estimate`
-or a longer, genuinely-available lag; or (b) leave `build_features` as a pure
-in-memory transform for offline training (where the walk-forward purge gap is
-the leak defence) and enforce `assert_available` only at the Phase 4 backtest
-/ live-inference boundary, where the real decision timestamp is known. Not
-resolved here — flagged for explicit review before this builder's output is
-used for anything beyond the Phase 2a baseline comparison (Task 6).
+**Initial resolution (superseded below).** First pass implemented Task 5 as
+specified — catalogue metadata only, no per-row enforcement — and left the
+tension above open for explicit review rather than silently resolving it in
+either direction, per CLAUDE.md §11 ("ask before... making a domain
+assumption that materially changes results").
+
+### Follow-up — resolved: `lag_price_short_1` removed, enforcement wired in with NaN masking
+
+The project owner reviewed the finding above, verified it directly against
+`data_availability`, and confirmed: **`lag_price_short_1` can never be
+available.** Settled prices publish D+1 10:00, so at ISP-start decision time
+no settled value from the target period's own delivery day exists yet, at
+any lag shorter than "yesterday, and only after ~10:00 local." Their
+measurement:
+
+```
+decision = ISP start        t-1     t-96(1d)   t-192(2d)   t-672(7d)
+2026-06-17 06:00 UTC         no        no         YES         YES
+2026-06-17 12:00 UTC         no       YES         YES         YES
+yesterday-same-ISP available for 55/96 ISPs of a day (57%)
+```
+
+**Catalogue changes.**
+- `lag_price_short_1` and `lag_spread_1` **removed**, not deprecated — an
+  impossible feature left in place invites someone to "fix" the enforcement
+  around it instead of removing it.
+- `lag_price_short_192` **added** (settled price two days back, same ISP):
+  always available regardless of decision-time hour-of-day, since D+1 10:00
+  settlement of a two-day-old period is always in the past by the time any
+  ISP of the current day starts.
+- `lag_price_short_freshest` **added**: `lag_price_short_96` where available,
+  else `lag_price_short_192` (which always is). This is the actual "last
+  observed value" a real decision has access to, and is now what
+  `PersistenceBaseline` reads (`src/models/baselines.py`) — its docstring now
+  states plainly that "last observed" means 1-2 days old, a property of this
+  market's settlement mechanics, not a baseline weakness.
+- `lag_price_short_96` and `lag_price_short_672` kept (already legitimately
+  laggy enough to often clear the settlement rule). `lag_spread_1` replaced
+  by `lag_spread_96`, masked the same way.
+
+**Enforcement.** `build_features` now calls
+`src.data.data_availability.is_available(field, target_isp_of_the_lagged_value,
+decision_time=ISP_start)` per row for every settled-price-derived lag, via a
+new `_availability_mask`/`_masked_lag` pair in `src/features/builder.py`, and
+sets the value to NaN where unavailable — it does **not** raise, since
+non-availability is a legitimate per-row state (~43-45% of rows for the
+1-day lags in the measurements below), not an error. A catalogue entry naming
+a field `data_availability` refuses outright (`UnresolvedLagError`, e.g. an
+unmeasured lag) is left to propagate rather than caught, since that is a
+genuine catalogue bug, not a per-row state.
+
+**Availability rates measured**, 30 days of synthetic ISPs (2,880 rows,
+`day_ahead` supplied so that column gets a fair test too):
+
+| Column | Available | Rate | Note |
+|---|---|---|---|
+| `lag_price_short_96` | 1,595 / 2,880 | 55.4% (57.3% of eligible rows once the 96-row lead-in is excluded) | Matches the owner's measured 57% exactly |
+| `lag_spread_96` | 1,595 / 2,880 | 55.4% | Same mask as above (same field, same lag) |
+| `lag_price_short_192` | 2,688 / 2,880 | 93.3% | Shortfall is purely the 192-row lead-in (`2880-192=2688`); always available once there is enough history |
+| `lag_price_short_672` | 2,208 / 2,880 | 76.7% | Shortfall is purely the 672-row (7-day) lead-in (`2880-672=2208`); always available once there is enough history |
+| `lag_price_short_freshest` | 2,743 / 2,880 | 95.2% | NaN only inside the 192-row lead-in, and even there recovers via `lag_price_short_96` wherever that clears the settlement rule |
+| calendar (`hour_sin`/`hour_cos`/`dow_sin`/`dow_cos`/`hour`/`dayofweek`) | 2,880 / 2,880 | 100% | Pure functions of the timestamp; never masked |
+| `day_ahead_price` | 2,880 / 2,880 | 100% | Published D-1 13:00 for the whole of day D, so always available by any ISP of day D; here because a `day_ahead` series was supplied |
+
+`lag_price_short_192`/`_672`/`freshest` never fall below 100% for a *reason
+other than* insufficient lead-in history in a finite synthetic window — on
+real cached data (26,208+ ISPs) the lead-in cost is one-time and negligible.
+
+**Do not change `src/data/data_availability.py`.** Confirmed: it is correct
+and mutation-tested; the feature design (source field choice, not the
+enforcement layer) was what was wrong, and this fix changes only the
+catalogue and the builder that consumes it.
+
+Test coverage: `tests/test_feature_builder.py::test_no_catalogued_feature_is_ever_unavailable_for_every_row`
+(with a deviation from the literal test as proposed — `day_ahead` is supplied
+so `day_ahead_price` gets a fair chance to be non-NaN, since an all-NaN
+column from an *omitted optional input* is a different, non-bug condition
+from an *impossible* feature, which is what this test is meant to catch),
+`::test_same_day_settled_price_is_never_used`,
+`::test_yesterdays_price_is_masked_before_the_settlement_run`.

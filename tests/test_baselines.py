@@ -20,7 +20,7 @@ def _frame(n: int = 96 * 14) -> pd.DataFrame:
     rng = np.random.default_rng(0)
     return pd.DataFrame(
         {
-            "lag_price_short_1": rng.normal(50, 20, n),
+            "lag_price_short_freshest": rng.normal(50, 20, n),
             "day_ahead_price": rng.normal(50, 10, n),
             "hour": idx.hour,
             "dayofweek": idx.dayofweek,
