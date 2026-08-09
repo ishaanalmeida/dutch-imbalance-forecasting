@@ -14,6 +14,7 @@ dependencies = [
     "pyarrow==15.0.2",
     "httpx==0.28.1",
     "entsoe-py==0.8.0",
+    "numpy==1.26.4",
 ]
 
 [dependency-groups]

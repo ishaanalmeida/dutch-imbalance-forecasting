@@ -232,6 +232,7 @@ source = { virtual = "." }
 dependencies = [
     { name = "entsoe-py" },
     { name = "httpx" },
+    { name = "numpy" },
     { name = "pandas" },
     { name = "pyarrow" },
     { name = "pyyaml" },
@@ -251,6 +252,7 @@ dev = [
 requires-dist = [
     { name = "entsoe-py", specifier = "==0.8.0" },
     { name = "httpx", specifier = "==0.28.1" },
+    { name = "numpy", specifier = "==1.26.4" },
     { name = "pandas", specifier = "==2.2.3" },
     { name = "pyarrow", specifier = "==15.0.2" },
     { name = "pyyaml", specifier = "==6.0.2" },
