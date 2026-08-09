@@ -287,11 +287,50 @@ def summarise() -> int:
     return 0
 
 
+def burst(burst_minutes: int, every_minutes: int, hours: float) -> int:
+    """Duty-cycled sampling: poll for `burst_minutes`, sleep, repeat.
+
+    Why not just poll continuously for 24 hours. The open question about the
+    lag is whether it VARIES BY TIME OF DAY -- overnight, at weekends, during
+    scarcity -- not whether it is stable minute to minute, which the first run
+    already answered (630 samples spanning 1.0 second).
+
+    Continuous polling for 24 h is ~7,200 requests. TenneT's support FAQ says
+    there are limits "per second, per hour and per day" and that they differ
+    per API; the Balance Delta spec publishes only per-second and per-minute,
+    so an hourly or daily cap may exist that we cannot see. Exceeding it "may
+    result in temporary blocking of your API keys" -- which would cost far more
+    than the extra samples are worth.
+
+    Ten minutes per hour gives ~50 samples in each hourly bucket, which is
+    ample to detect a step change in a quantity whose within-window spread is
+    one second, at a sixth of the request volume.
+    """
+    end = time.time() + hours * 3600
+    cycle = 0
+    while time.time() < end:
+        cycle += 1
+        print(f"\n--- burst {cycle} @ {datetime.now(UTC):%H:%M}Z ---")
+        poll(burst_minutes)
+        idle = max(0.0, (every_minutes - burst_minutes) * 60)
+        if time.time() + idle >= end:
+            break
+        time.sleep(idle)
+    return summarise()
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--probe", action="store_true", help="one request, dump the shape")
     parser.add_argument("--summarise", action="store_true", help="stats from existing samples")
     parser.add_argument("--minutes", type=int, default=120)
+    parser.add_argument(
+        "--burst-hours",
+        type=float,
+        help="duty-cycled run over this many hours (for time-of-day coverage)",
+    )
+    parser.add_argument("--burst-minutes", type=int, default=10)
+    parser.add_argument("--every-minutes", type=int, default=60)
     args = parser.parse_args(argv)
 
     from src.env import load_env
@@ -302,6 +341,8 @@ def main(argv: list[str] | None = None) -> int:
         return probe()
     if args.summarise:
         return summarise()
+    if args.burst_hours:
+        return burst(args.burst_minutes, args.every_minutes, args.burst_hours)
     return poll(args.minutes)
 
 
