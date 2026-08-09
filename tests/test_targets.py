@@ -72,9 +72,35 @@ def test_holdout_slice_is_exactly_the_reserved_window() -> None:
 
 
 def test_training_and_holdout_never_overlap() -> None:
-    idx = pd.date_range("2024-10-01", periods=96 * 400, freq="15min", tz="UTC")
+    """R2: the holdout is evaluated exactly once. The fixture must SPAN both
+    windows or this test is vacuous -- an empty slice intersects everything
+    emptily, so a real overlap bug would pass unnoticed."""
+    idx = pd.date_range("2024-10-01", "2026-09-01", freq="15min", tz="UTC")
     df = pd.DataFrame({"price_long": 1.0, "price_short": 1.0}, index=idx)
-    assert set(training_slice(df).index) & set(holdout_slice(df).index) == set()
+
+    train, hold = training_slice(df), holdout_slice(df)
+    assert len(train) > 0, "fixture does not reach the training window"
+    assert len(hold) > 0, "fixture does not reach the holdout window"
+    assert set(train.index) & set(hold.index) == set()
+
+
+def test_no_training_row_falls_inside_the_holdout_window() -> None:
+    """The single most damaging possible bug in this module, asserted directly
+    rather than inferred from an intersection."""
+    idx = pd.date_range("2024-10-01", "2026-09-01", freq="15min", tz="UTC")
+    df = pd.DataFrame({"price_long": 1.0, "price_short": 1.0}, index=idx)
+    train = training_slice(df)
+    assert not ((train.index >= HOLDOUT_START) & (train.index < HOLDOUT_END)).any()
+
+
+def test_boundary_instants_are_inclusive_lower_bounds() -> None:
+    """Half-open [start, end): the boundary instant itself belongs to the
+    window that starts there, and to exactly one window."""
+    idx = pd.date_range("2024-10-01", "2026-09-01", freq="15min", tz="UTC")
+    df = pd.DataFrame({"price_long": 1.0, "price_short": 1.0}, index=idx)
+    assert PICASSO_START in training_slice(df).index
+    assert HOLDOUT_START in holdout_slice(df).index
+    assert HOLDOUT_START not in training_slice(df).index
 
 
 def test_holdout_boundaries_are_the_documented_dates() -> None:
