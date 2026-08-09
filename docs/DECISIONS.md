@@ -642,3 +642,67 @@ limitation is a recorded decision rather than something discovered later.
 decision time is **t−2**, not t−1 — t−1 ends exactly at the decision instant
 and publishes 134 s after it. Same shape as the real-time price estimate, and
 for the same reason.
+
+## ADR-022 — ADR-007 withdrawn: the dominant break is PICASSO, not the 12s state input
+
+**I got this wrong, and the earlier "confirmation" was an artefact of a crude
+before/after split on a rising series.**
+
+ADR-007 predicted state 2 would become more frequent from 2026-02-03 (the
+12-second state-determination input). ADR-016 reported +10.9pp across that date
+and called it "consistent, confounded with season". Sampling one week per
+quarter back to 2021 shows the real shape:
+
+| Quarter | Dual-priced | | Quarter | Dual-priced |
+|---|---|---|---|---|
+| 2021-02 | 6.8% | | 2024-08 | 12.5% |
+| 2021-11 | 6.0% | | **2024-11** | **25.7%** ← after PICASSO |
+| 2022-08 | 3.9% | | 2025-05 | 26.2% |
+| 2023-05 | 4.8% | | 2025-11 | 32.6% |
+| 2024-02 | 5.7% | | **2026-02** | **26.5%** ← after 12s input |
+| 2024-05 | 8.0% | | 2026-05 | 40.5% |
+
+Two things kill the ADR-007 story:
+
+1. **The share roughly quadruples at PICASSO (Oct 2024)** — 5.7% in 2024-02 and
+   8.0% in 2024-05, then 25.7% by 2024-11. That dwarfs anything at 2026-02-03.
+2. **2026-02 (26.5%) is LOWER than 2025-11 (32.6%).** The quarter immediately
+   after the state-input change sits *below* the quarter before it. A crude
+   split at 2026-02-03 showed a rise only because it pooled all of 2026-03..07
+   against all of 2025-11..2026-01 on a series that was trending up anyway.
+
+**Splitting a trending series at an arbitrary date always produces a "jump".**
+That is what ADR-016 actually measured. The season caveat it carried was real
+but insufficient — the deeper problem was the trend, which I had no visibility
+into until I looked before 2025.
+
+**ADR-007's mechanism is not disproven** — more samples per ISP really should
+make exact monotonicity rarer — but it is **not detectable** in this data and
+must not be presented as observed. Withdrawn as an empirical claim; retained
+only as an untested hypothesis.
+
+### The better-supported mechanism, from TenneT's own text
+
+[IPS61] §3.4, added in v6.1: *"As a result of participation in PICASSO a Dutch
+shortage can for example change into a surplus, when the other participants
+have a surplus, or vice versa."*
+
+A within-ISP flip from shortage to surplus is **exactly** the condition for
+regulation state 2: the balance-delta series both rises and falls. So PICASSO
+mechanically manufactures state-2 periods, and the data shows precisely that
+at precisely that date. This is primary-sourced and matches a fourfold jump —
+far stronger than the ADR-007 speculation ever was.
+
+### Consequence for Phase 2 (this is why it matters)
+
+Pre-PICASSO ISPs are dual-priced ~6% of the time; post-PICASSO 26–40%. A model
+trained across that boundary would be badly miscalibrated on P(state 2) — the
+quantity that decides whether the risk-aware dispatch policy beats the
+deterministic one. **Training is therefore restricted to 2024-10-18 onward**
+(~22 months), accepted knowingly as below CLAUDE.md §3's 3-year target, and
+recorded in LIMITATIONS.md.
+
+**Method lesson, worth keeping.** The check that caught this was cheap: look
+further back than the window you are arguing about. I had 9 months cached and
+formed a conclusion; 5 years of one-week-per-quarter samples reversed it for
+about twenty API calls.
