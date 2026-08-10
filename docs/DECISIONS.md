@@ -834,3 +834,63 @@ column from an *omitted optional input* is a different, non-bug condition
 from an *impossible* feature, which is what this test is meant to catch),
 `::test_same_day_settled_price_is_never_used`,
 `::test_yesterdays_price_is_masked_before_the_settlement_run`.
+
+## ADR-024 — encode the observed MAX lag, not the p95; and the lag is not constant
+
+**Two corrections to ADR-019/ADR-020, both from a 60-hour measurement.**
+
+### 1. The lag varies by time of day
+
+ADR-020 called the lag "a deterministic configured constant" on the strength of
+630 samples spanning 2.18 hours of one afternoon (range: 1.0 second). A 974-sample,
+60.1-hour run says otherwise:
+
+| Hours (UTC) | median | max |
+|---|---|---|
+| 12:00–14:00 | 133.5 s | 134.0 s |
+| 15:00–17:00, 21:00–00:00 | 121.5 s | 122.0 s |
+| 23:00 | 121.7 s | **145.8 s** |
+
+The two clusters differ by **12.0 s — exactly one publication cadence tick**.
+That points at poll-phase aliasing (our documented 0–12 s upward bias) rather
+than two TSO settings, and the 23:00 outlier at 145.8 s is two ticks. Either
+way it is measurement noise in the conservative direction, so it is treated as
+noise and not as a signal about TenneT's configuration.
+
+**The method lesson repeats ADR-022's:** a tight distribution inside a short
+window is not evidence of stability outside it. Two hours said "constant";
+sixty hours said otherwise.
+
+### 2. p95 was the wrong statistic, and that was my instruction
+
+ADR-019 and the Phase 1 plan both said to encode the **p95**, reasoning that a
+median "would grant look-ahead on half the observations". Correct about the
+median, one step short of the right conclusion.
+
+**R1 is asymmetric.** Understating the lag claims data was retrievable earlier
+than it was — look-ahead, on exactly the fraction of rows in the upper tail.
+Overstating it only withholds signal. Measured against the 974-sample set:
+
+| Encoded | Rows with a longer true lag | |
+|---|---|---|
+| median (133.2 s) | 486 / 974 | **49.9% leak** |
+| p95 (133.9 s) | 48 / 974 | **4.9% leak** |
+| p99 (134.0 s) | 9 / 974 | 0.9% leak |
+| **max (145.8 s)** | **0 / 974** | **0%** |
+
+The previously-encoded 134 s would have leaked on about **1 row in 20** — not
+catastrophic, but exactly the kind of quiet, flattering error this project
+exists to avoid, and invisible in any result.
+
+**Decision: encode the observed maximum, rounded up. `lag_seconds: 146`.**
+Re-encode upward if a longer tail ever appears; never downward without a
+larger sample than the one that produced the current value.
+
+The test no longer hard-codes a number. It asserts
+`lag_seconds >= lag_measurement.max_seconds`, so the encoded value is pinned to
+its own evidence and cannot silently drift below it.
+
+### Still unobserved
+
+Hours 01:00–11:00 and 18:00–20:00 UTC, weekends, and scarcity periods. The
+coverage caveat in `config/market_rules.yaml` stands.

@@ -84,23 +84,33 @@ def test_an_unresolved_lag_still_blocks_use_in_both_directions() -> None:
 
 
 def test_balance_delta_respects_its_measured_lag() -> None:
-    """Measured p95 = 134 s from the END of the period (ADR-019).
+    """Measured from the END of the period (ADR-019, ADR-024).
 
-    Consequence worth stating: the balance delta for ISP t-1 publishes 134 s
-    AFTER t-1 ends — i.e. 134 s into ISP t — so it is NOT available at the
+    Consequence worth stating: the balance delta for ISP t-1 publishes the
+    measured lag AFTER t-1 ends — i.e. 134 s into ISP t — so it is NOT available at the
     decision instant for t. The newest usable ISP-level balance delta is t-2.
     Same shape as the real-time price estimate, and for the same reason.
     """
     spec = load_rules()["publication"]["balance_delta"]
     assert spec["lag_confidence"] == "measured", "lag must be measured, never assumed"
-    assert spec["lag_seconds"] == 134
+    lag_seconds = int(spec["lag_seconds"])
+
+    # Pin the value against its own evidence rather than hard-coding a number
+    # that silently rots. R1 is asymmetric: understating the lag leaks, while
+    # overstating only costs signal -- so the encoded value must be at least
+    # the largest lag ever observed.
+    measurement = spec["lag_measurement"]
+    assert lag_seconds >= measurement["max_seconds"], (
+        f"encoded lag {lag_seconds}s is below the observed max "
+        f"{measurement['max_seconds']}s -- that leaks on the upper tail"
+    )
 
     # Its own ISP: obviously not available at that ISP's start.
     assert not is_available("balance_delta", ISP, DECISION)
 
-    # The immediately previous ISP: ends exactly at DECISION, publishes 134 s later.
+    # The immediately previous ISP: ends exactly at DECISION, publishes lag_seconds later.
     previous = ISP - timedelta(minutes=15)
-    assert available_at("balance_delta", previous) == DECISION + timedelta(seconds=134)
+    assert available_at("balance_delta", previous) == DECISION + timedelta(seconds=lag_seconds)
     assert not is_available("balance_delta", previous, DECISION)
 
     # Two ISPs back: ends 15 min before DECISION, so visible with ~13 min to spare.
@@ -110,8 +120,9 @@ def test_balance_delta_respects_its_measured_lag() -> None:
 
 def test_balance_delta_isp_level_availability_is_deliberately_conservative() -> None:
     """balance_delta is a 12-SECOND signal, but `lag_after_period` answers at
-    ISP granularity: it reports the whole ISP as arriving 134 s after the ISP
-    ends. In reality each 12 s point arrives 134 s after that POINT ends, so
+    ISP granularity: it reports the whole ISP as arriving `lag_seconds` after
+    the ISP ends. In reality each 12 s point arrives that long after that
+    POINT ends, so
     most of ISP t-1 is visible well before this rule admits.
 
     That is conservative — it can only ever withhold information, never grant

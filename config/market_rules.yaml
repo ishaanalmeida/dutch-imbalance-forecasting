@@ -202,42 +202,49 @@ publication:
     cadence_confidence: primary
     cadence_source: "TenneT news, 'Balance delta now published every 12 seconds', 25 Nov 2025"
 
-    lag_seconds: 134             # p95 of 630 measured samples, rounded up
+    lag_seconds: 146             # observed MAX of 974 samples, rounded up (not p95)
     lag_confidence: measured
     lag_measurement:
       method: >
         Polled https://api.tennet.eu/publications/v1/balance-delta-high-res/latest
-        at TenneT's recommended cadence (5x/min, 1s after each 12s refresh).
+        at TenneT's recommended cadence (5x/min, 1s after each 12s refresh),
+        duty-cycled 10 min/hour to stay inside undisclosed hourly/daily caps.
         lag = first_seen - point.timeInterval_end. The interval END is used
-        because a point covers [start, end) and is only complete at end; using
-        start would understate every lag by one 12s tick.
+        because a point covers [start, end) and is only complete at end.
       script: scripts/measure_balance_delta_lag.py
-      samples: 630
-      isps_spanned: 10
+      samples: 974
       observed_from: "2026-08-07T12:15Z"
-      observed_to: "2026-08-07T14:25Z"
-      min_seconds: 133.0
-      median_seconds: 133.5
-      p95_seconds: 134.0
-      max_seconds: 134.0
-      stdev_seconds: 0.29
-      encoded_value: 134
-      why_p95_not_median: >
-        A median lag would grant look-ahead on half the observations. p95 is
-        the honest choice for R1; here p95 and max coincide anyway.
+      observed_to: "2026-08-10T00:18Z"
+      hours_covered: 60.1
+      median_seconds: 133.2
+      p95_seconds: 133.9
+      max_seconds: 145.8
+      encoded_value: 146
+      why_max_not_p95: >
+        R1 is ASYMMETRIC. Understating the lag claims data was retrievable
+        earlier than it was -- look-ahead, on exactly the fraction of rows in
+        the upper tail. Overstating it only withholds signal. Measured against
+        this sample: encoding the median would leak on 49.9% of rows, p95 on
+        4.9%, p99 on 0.9%, and the observed max on 0%. An earlier revision of
+        this file encoded the p95 (134) on the strength of a 2-hour sample; a
+        60-hour sample showed a 145.8s tail, so 134 would have leaked on about
+        1 row in 20. Encode the max, and re-encode if a longer tail appears.
+      time_of_day_variation: >
+        NOT constant, contrary to the first 2-hour measurement. Two clusters:
+        ~121.5s (15:00-17:00, 21:00-00:00 UTC) and ~133.5s (12:00-14:00 UTC),
+        separated by 12.0s -- exactly one publication cadence tick. That
+        strongly suggests poll-phase aliasing (our documented 0-12s upward
+        bias) rather than two different TSO settings, but it is not proven
+        either way, and the 23:00 outlier at 145.8s is two ticks. Treated as
+        measurement noise in the conservative direction, not as a signal.
       known_bias: >
         Biased UP by 0-12s: we poll every 12s, so a point can sit published for
-        up to one poll interval before we see it. Conservative for R1 -- it can
-        never make data look available earlier than it truly was.
-      confirms: >
-        The trade-press "2 minute" figure is close to correct as a CURRENT
-        value (measured 133.5s median). The 3->5->2 minute TIMELINE remains
-        unsubstantiated; this measurement says nothing about historical values.
-
+        up to one poll interval before we see it. Conservative for R1.
     # ---- COVERAGE LIMITATION. Read before trusting this for a backtest. ----
     lag_coverage_caveat: >
-      Measured across 2.18 hours of a single weekday afternoon (12:15-14:25
-      UTC). NOT observed: overnight, weekends, or scarcity/high-volatility
+      Measured across 60.1 hours (2026-08-07 12:15Z to 2026-08-10 00:18Z),
+      duty-cycled. Hours 01:00-11:00 and 18:00-20:00 UTC are still unobserved,
+      as are weekends and scarcity/high-volatility
       periods -- exactly the conditions where a battery earns most and where a
       TSO is most likely to intervene. ADR-017 established from TenneT's own
       API docs that the delay is "configurable", i.e. a knob they turn.
@@ -250,7 +257,15 @@ publication:
       - from: "2026-08-07"
         lag_seconds: 134
         confidence: measured
-        note: "First empirical measurement. No earlier value was ever established."
+        superseded: true
+        note: >
+          First measurement, 630 samples over one 2.18h afternoon. Encoded the
+          p95. Superseded: a 60h sample found a 145.8s tail, so this value
+          would have leaked on ~5% of rows.
+      - from: "2026-08-10"
+        lag_seconds: 146
+        confidence: measured
+        note: "974 samples over 60.1h. Encodes the observed max, not the p95."
     revised: false
     time_varying: unknown
     note: >
