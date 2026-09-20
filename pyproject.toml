@@ -18,6 +18,7 @@ dependencies = [
     "scikit-learn==1.9.1",
     "scipy>=1.17.1",
     "lightgbm==4.6.0",
+    "cvxpy>=1.6.0",
 ]
 
 [dependency-groups]
@@ -33,9 +34,10 @@ dev = [
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
-addopts = "-q --strict-markers -m 'not integration'"
+addopts = "-q --strict-markers -m 'not integration' --ignore=tests/cvxpy"
 markers = [
     "integration: hits a live network API; excluded by default, run with -m integration",
+    "cvxpy: uses cvxpy/osqp; run separately via 'pytest tests/cvxpy' (DLL conflict with lightgbm on Windows)",
 ]
 
 [tool.ruff]
@@ -61,3 +63,13 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = "lightgbm.*"
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "cvxpy.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "src.optimisation.*"
+disallow_any_unimported = false
+disallow_untyped_calls = false
+disable_error_code = ["attr-defined"]
