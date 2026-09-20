@@ -17,6 +17,7 @@ dependencies = [
     "numpy==1.26.4",
     "scikit-learn==1.9.1",
     "scipy>=1.17.1",
+    "lightgbm==4.6.0",
 ]
 
 [dependency-groups]
@@ -55,4 +56,8 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = "scipy.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "lightgbm.*"
 ignore_missing_imports = true
