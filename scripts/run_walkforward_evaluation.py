@@ -85,9 +85,9 @@ def _calibration_report(
     print(f"  PIT CV (0 = perfect uniform):    {pit_cv:.4f}")
     crps = crps_from_quantiles(y_all, pred_all, QUANTILES)
     print(f"  CRPS (approx):                   {crps:.4f}")
-    print("  Coverage table (nominal → empirical):")
+    print("  Coverage table (nominal -> empirical):")
     for i in range(0, len(taus), 4):
-        parts = [f"  {taus[j]:.2f}→{coverage[j]:.3f}" for j in range(i, min(i + 4, len(taus)))]
+        parts = [f"  {taus[j]:.2f}->{coverage[j]:.3f}" for j in range(i, min(i + 4, len(taus)))]
         print("   " + "  ".join(parts))
 
     return {

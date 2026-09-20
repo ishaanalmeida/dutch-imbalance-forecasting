@@ -5,35 +5,32 @@ state at 15-minute resolution, and battery dispatch optimised against the full
 predictive distribution — backtested under real settlement rules, real
 publication latency, and an explicit market-impact model.
 
-## Status: Phase 1 complete; Phase 2 has a first measured checkpoint
+## Status: Phase 2 forecasting + Phase 3 dispatch complete; backtest engine built
 
 | Phase | State |
 |---|---|
-| 0 — Domain verification | ✅ [`docs/DOMAIN_NOTES.md`](docs/DOMAIN_NOTES.md), [`config/market_rules.yaml`](config/market_rules.yaml) |
-| 1 — Data layer | ✅ built, tested, and **connected to live data** (ENTSO-E), gap-free 2024-10-18 to 2026-04-30 |
-| 2 — Forecasting | 🟡 baselines + LEAR wired to real walk-forward folds; GBM, DM tests, calibration still open |
-| 3 — Dispatch optimisation | ⬜ |
-| 4 — Backtest | ⬜ |
-| 5 — Demo | ⬜ |
-| 6 — Write-up | ⬜ |
+| 0 -- Domain verification | done: [`docs/DOMAIN_NOTES.md`](docs/DOMAIN_NOTES.md), [`config/market_rules.yaml`](config/market_rules.yaml) |
+| 1 -- Data layer | done: tested, **connected to live data** (ENTSO-E), gap-free 2024-10-18 to 2026-04-30 |
+| 2 -- Forecasting | done: baselines + LEAR + GBM, DM significance tests, calibration pending final report |
+| 3 -- Dispatch optimisation | done: deterministic, CVaR, and perfect-foresight policies |
+| 4 -- Backtest | in progress: engine built with look-ahead enforcement, bootstrap CIs |
+| 5 -- Demo | not started |
+| 6 -- Write-up | not started |
 
-**Headline result (significance-tested, not yet calibration-checked):** on 18
-walk-forward folds (2024-11 through 2026-04, holdout untouched), an
-L1-regularised quantile-regression model (LEAR) scores **23.2 mean pinball
-loss (EUR/MWh)** predicting the imbalance short price, against 25.5 for the
-climatological baseline and 42.5 for persistence. The improvement over
-climatology is statistically significant (Diebold-Mariano DM = -16.55,
-p < 10⁻⁶⁰, Holm-Bonferroni corrected over 4 comparisons; 52,416 test
-observations). Produced by [`scripts/run_walkforward_evaluation.py`](scripts/run_walkforward_evaluation.py);
-full numbers in [`docs/DECISIONS.md`](docs/DECISIONS.md) ADR-027/028.
-**Not yet done:** calibration/coverage (PIT histogram, reliability curves),
-segmented reporting (by regulation state, hour, season, year, and across the
-2025-10-01 day-ahead MTU change), or quantile-GBM. This file will carry no
-number that was not produced by code in this repo.
+**Headline result (significance-tested):** on 18 walk-forward folds (2024-11
+through 2026-04, holdout untouched), LEAR scores **23.20 mean pinball loss
+(EUR/MWh)** and quantile-GBM scores **23.17**, against 25.47 for the
+climatological baseline and 42.50 for persistence. Both models beat
+climatology with extreme significance (Diebold-Mariano DM = -16.55 / -15.31,
+p << 0.001, Holm-Bonferroni corrected over 5 comparisons; 52,416 test
+observations). The 0.03 difference between LEAR and GBM is economically
+negligible. Produced by [`scripts/run_walkforward_evaluation.py`](scripts/run_walkforward_evaluation.py);
+full numbers in [`docs/DECISIONS.md`](docs/DECISIONS.md) ADR-027/028/029.
+This file carries no number that was not produced by code in this repo.
 
 ## What exists today
 
-**264 tests, `ruff` and `mypy --strict` clean, verified from a clean clone.**
+**292 tests (275 default + 17 cvxpy-isolated), `ruff` and `mypy --strict` clean.**
 
 - **The no-look-ahead gate** ([`src/data/data_availability.py`](src/data/data_availability.py),
   [`tests/test_no_lookahead.py`](tests/test_no_lookahead.py)). `available_at(field, isp)`

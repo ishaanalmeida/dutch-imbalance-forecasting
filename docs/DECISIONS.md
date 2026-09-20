@@ -1184,3 +1184,63 @@ EUR/MWh, or ~9%), not whether it is distinguishable from zero.
 is tried — a multiple-comparison correction over the model search space.
 The DM test also does not answer whether LEAR's edge is stable across
 regimes; that is the segmented-reporting question.
+
+---
+
+## ADR-029 — GBM evaluation results and model comparison
+
+**Date**: 2026-09-20
+**Status**: observation
+
+### Finding
+
+Quantile-GBM (LightGBM, one model per quantile) achieves pinball loss
+23.17 EUR/MWh, virtually identical to LEAR's 23.20. Both beat climatology
+(25.47) with extreme significance (DM stats of -15.31 and -16.55
+respectively, p << 0.001, Holm-Bonferroni corrected over 5 comparisons).
+
+| Model | Mean Pinball | Std | DM vs Climatology | p-value |
+|---|---|---|---|---|
+| GBM | 23.17 | 7.09 | -15.31 | < 10^-50 |
+| LEAR | 23.20 | 6.90 | -16.55 | < 10^-60 |
+| Climatology | 25.47 | 7.74 | (reference) | — |
+| Day-ahead | 29.19 | 7.96 | +16.48 | < 10^-60 |
+| Persistence | 42.50 | 12.23 | +22.04 | < 10^-100 |
+
+### Interpretation
+
+The 0.03 EUR/MWh difference between GBM and LEAR is economically negligible.
+LEAR's slightly lower standard deviation (6.90 vs 7.09) suggests marginally
+more consistent fold-to-fold performance. Both models represent a ~9%
+improvement over the hour-of-day/day-of-week climatological baseline.
+
+The seasonal_naive_1d baseline failed on all folds (NaN in predictions from
+data gaps). This is a known issue: the first 96 ISPs of training data after
+the PICASSO structural break (2024-10-18) have no same-day-yesterday
+reference.
+
+### Decision
+
+Use both LEAR and GBM in the backtest. The near-identical performance
+means the dispatch optimisation results should be insensitive to model
+choice — which is itself a finding worth reporting. Total model
+configurations searched: 2 (LEAR + GBM); multiple-comparison correction
+via Holm-Bonferroni is already applied.
+
+---
+
+## ADR-030 — osqp/pandas DLL conflict on Windows
+
+**Date**: 2026-09-20
+**Status**: workaround
+
+osqp 1.1.3's native DLL segfaults when loaded after pandas has already
+imported (likely a BLAS/LAPACK DLL conflict). We only use CLARABEL, so
+osqp is never called, but cvxpy probes all installed solvers at import
+time.
+
+**Workaround**: `tests/cvxpy/conftest.py` forces `import cvxpy` before
+any test module can trigger a pandas import. The dispatch tests were
+already isolated in `tests/cvxpy/` for the lightgbm variant of this
+conflict (ADR from previous session); this conftest makes it robust
+to import ordering within the cvxpy test directory.
