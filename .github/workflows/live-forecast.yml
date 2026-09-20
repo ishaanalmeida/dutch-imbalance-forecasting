@@ -1,0 +1,70 @@
+name: Live forecast
+
+# CLAUDE.md §7: "Start this job as early as possible in the project; it
+# accrues value with wall-clock time and nothing else does."
+#
+# Produces a quantile forecast for the next ISPs and logs it to
+# forecast_log/forecasts.jsonl. After realised prices arrive, the
+# track-record screen shows forecast vs outcome.
+
+on:
+  schedule:
+    # Every 15 minutes during peak hours (06-22 UTC), hourly otherwise.
+    # ISPs are 15 min, so this captures every decision point during
+    # active trading hours.
+    - cron: "*/15 6-22 * * *"
+    - cron: "0 0-5,23 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: live-forecast
+  cancel-in-progress: false
+
+jobs:
+  forecast:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Sync dependencies
+        run: uv sync --locked --dev
+
+      - name: Produce forecast
+        env:
+          ENTSOE_API_TOKEN: ${{ secrets.ENTSOE_API_TOKEN }}
+        run: uv run python -m src.jobs.live_forecast
+
+      - name: Commit forecast log
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add forecast_log/
+          if git diff --cached --quiet; then
+            echo "No new forecasts produced."
+            exit 0
+          fi
+          git commit -m "chore(forecast): live forecast as of $(date -u +%Y-%m-%dT%H:%MZ)"
+
+          git pull --rebase --autostash origin "${GITHUB_REF_NAME}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+
+      - name: Guard — nothing under data/ was committed (R7)
+        if: always()
+        run: |
+          set -euo pipefail
+          if git log --name-only --pretty=format: -1 | grep -q '^data/'; then
+            echo "::error::A commit touched data/ — R7 violation."
+            exit 1
+          fi

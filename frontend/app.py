@@ -16,6 +16,8 @@ import streamlit as st
 ROOT = Path(__file__).resolve().parent.parent
 BACKTEST_PATH = ROOT / "work" / "backtest" / "backtest_results.json"
 EVAL_PATH = ROOT / "work" / "evaluation" / "walkforward_results.json"
+HOLDOUT_PATH = ROOT / "work" / "holdout" / "holdout_results.json"
+FORECAST_LOG = ROOT / "forecast_log" / "forecasts.jsonl"
 
 st.set_page_config(
     page_title="NL Imbalance Lab",
@@ -37,6 +39,25 @@ def load_backtest() -> dict:
 
 
 @st.cache_data
+def load_holdout() -> dict | None:
+    if HOLDOUT_PATH.exists():
+        with open(HOLDOUT_PATH) as f:
+            return json.load(f)
+    return None
+
+
+@st.cache_data
+def load_forecast_log() -> list[dict]:
+    if FORECAST_LOG.exists():
+        entries = []
+        for line in FORECAST_LOG.read_text().strip().split("\n"):
+            if line.strip():
+                entries.append(json.loads(line))
+        return entries
+    return []
+
+
+@st.cache_data
 def load_evaluation() -> dict:
     with open(EVAL_PATH) as f:
         return json.load(f)
@@ -44,6 +65,8 @@ def load_evaluation() -> dict:
 
 bt = load_backtest()
 ev = load_evaluation()
+ho = load_holdout()
+fc_log = load_forecast_log()
 
 tab_forecast, tab_track, tab_backtest, tab_whatif = st.tabs(
     ["Live Forecast", "Track Record", "Backtest Explorer", "What-If Simulator"]
@@ -53,17 +76,46 @@ tab_forecast, tab_track, tab_backtest, tab_whatif = st.tabs(
 
 with tab_forecast:
     st.header("Live Forecast")
-    st.info(
-        "The scheduled forecast job is not yet running. Once deployed, this screen "
-        "shows the current and next ISP forecasts with a fan chart of the predictive "
-        "distribution, predicted regulation state, and recommended dispatch action. "
-        "The live track record accumulates here — it cannot be back-fitted."
-    )
-    st.markdown(
-        "**Next step:** deploy the GitHub Actions cron that fetches new data, "
-        "produces a forecast, and logs it with a timestamp. Value accrues with "
-        "wall-clock time."
-    )
+    if fc_log:
+        latest = fc_log[-1]
+        st.markdown(f"**Last forecast issued:** {latest['forecast_issued_at']}")
+        st.metric("Median forecast (next ISP)", f"EUR {latest['median']:.1f}/MWh")
+
+        recent = fc_log[-min(len(fc_log), 96):]
+        fig_fc = go.Figure()
+        times = [r["target_isp"] for r in recent]
+        medians = [r["median"] for r in recent]
+        q10 = [r["quantiles"].get("0.10", r["median"]) for r in recent]
+        q90 = [r["quantiles"].get("0.90", r["median"]) for r in recent]
+        fig_fc.add_trace(go.Scatter(
+            x=times, y=q90, mode="lines", line=dict(width=0), showlegend=False,
+        ))
+        fig_fc.add_trace(go.Scatter(
+            x=times, y=q10, mode="lines", line=dict(width=0),
+            fill="tonexty", fillcolor="rgba(31,119,180,0.2)",
+            name="10-90% interval",
+        ))
+        fig_fc.add_trace(go.Scatter(
+            x=times, y=medians, mode="lines",
+            line=dict(color="#1f77b4", width=2), name="Median",
+        ))
+        fig_fc.update_layout(
+            yaxis_title="EUR/MWh", height=350, margin=dict(t=20),
+        )
+        st.plotly_chart(fig_fc, use_container_width=True)
+        st.caption(f"Showing last {len(recent)} logged forecasts. "
+                   f"Total in log: {len(fc_log)}.")
+    else:
+        st.info(
+            "The scheduled forecast job has not yet produced forecasts. "
+            "Once deployed via GitHub Actions, this screen shows the current and "
+            "next ISP forecasts with a fan chart of the predictive distribution. "
+            "The live track record accumulates here — it cannot be back-fitted."
+        )
+        st.markdown(
+            "**Next step:** push to GitHub and enable the `live-forecast` workflow. "
+            "Value accrues with wall-clock time."
+        )
 
 # ── Tab 2: Track Record ──────────────────────────────────────────────
 
@@ -293,6 +345,51 @@ with tab_backtest:
         f"step = {bt['dispatch_config']['step_isps']} ISPs, "
         f"scenario method = {bt['dispatch_config']['scenario_method']}."
     )
+
+    # -- Final holdout results --
+    if ho:
+        st.subheader("Final Holdout (One-Time Evaluation)")
+        st.markdown(
+            f"**Period:** {ho['holdout_start'][:10]} to {ho['holdout_end'][:10]} "
+            f"({ho['n_holdout']:,} ISPs, {ho['n_holdout'] * 0.25 / 24:.0f} days). "
+            f"Trained on {ho['n_train']:,} ISPs."
+        )
+        ho_pol = ["perfect_foresight", "deterministic", "cvar_0.5", "do_nothing"]
+        ho_lab = ["Perfect Foresight", "Deterministic", "CVaR (0.5)", "Do Nothing"]
+        ho_rows = []
+        for p, lab in zip(ho_pol, ho_lab, strict=True):
+            d = ho["dispatch"][p]
+            ci = ho["bootstrap_ci_95"].get(p)
+            ci_str = f"[{ci['lo']/1e3:.0f}K, {ci['hi']/1e3:.0f}K]" if ci else "—"
+            ho_rows.append({
+                "Policy": lab,
+                "Net Revenue": f"EUR {d['net_revenue_eur']:,.0f}",
+                "Ratio to PF": f"{d['ratio_to_pf']*100:.1f}%",
+                "95% CI": ci_str,
+            })
+        st.dataframe(ho_rows, hide_index=True, use_container_width=True)
+
+        # Comparison: walk-forward vs holdout
+        n_wf_years = bt["n_test_isps"] * 0.25 / 8760
+        n_ho_years = ho["n_holdout"] * 0.25 / 8760
+        st.markdown("**Walk-forward vs holdout (annualised):**")
+        comp_rows = []
+        for p, lab in [("deterministic", "Deterministic"), ("cvar_0.5", "CVaR (0.5)")]:
+            wf_ann = bt["policies"][p]["net_revenue_eur"] / n_wf_years
+            ho_ann = ho["dispatch"][p]["net_revenue_eur"] / n_ho_years
+            delta = ((ho_ann / wf_ann) - 1) * 100 if wf_ann != 0 else 0
+            comp_rows.append({
+                "Policy": lab,
+                "WF Annualised": f"EUR {wf_ann:,.0f}",
+                "Holdout Annualised": f"EUR {ho_ann:,.0f}",
+                "Delta": f"{delta:+.0f}%",
+            })
+        st.dataframe(comp_rows, hide_index=True, use_container_width=True)
+        st.caption(
+            "Holdout outperforms walk-forward on annualised basis. This may reflect "
+            "a more volatile/predictable market period (May-Jul 2026) rather than "
+            "model improvement — reported honestly per R3/R5."
+        )
 
 # ── Tab 4: What-If Simulator ──────────────────────────────────────────
 
