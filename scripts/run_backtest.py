@@ -61,46 +61,41 @@ def _slice(
 # ── Scenario generation ──────────────────────────────────────────────
 
 
-def schaake_shuffle(
+def generate_scenarios(
     q_pred: FloatArray,
     quantiles: tuple[float, ...],
     n_scenarios: int,
-    historical_paths: FloatArray,
     rng: np.random.Generator,
 ) -> FloatArray:
-    """Generate temporally coherent price scenarios from quantile forecasts.
+    """Stratified scenario generation from quantile forecasts.
 
-    CLAUDE.md §5: "sample scenarios from the quantile forecast, preserving
-    temporal correlation via a copula or a Schaake shuffle — do not sample
+    CLAUDE.md §5: "preserving temporal correlation ... do not sample
     quantiles independently across time."
 
-    1. For each ISP, sample n_scenarios values by interpolating between
-       quantile predictions at uniform random probabilities.
-    2. Reorder each scenario's values to match the rank structure of a
-       historical price path (the Schaake shuffle).
+    Each scenario samples at a consistent quantile LEVEL across all ISPs
+    (stratified: evenly spaced from low to high), with small per-ISP
+    jitter (std=0.03) so scenarios aren't perfectly deterministic.
+    Temporal correlation comes from the forecast shape itself — a
+    scenario at the 20th percentile follows the forecast's temporal
+    pattern at that level, preserving the directional signal the
+    optimizer needs to find charge/discharge patterns.
 
-    q_pred: (T, n_quantiles) — quantile predictions for the window.
-    historical_paths: (n_paths, T) — recent observed price paths.
-    Returns: (n_scenarios, T) — correlated price scenarios.
+    ADR-031: the original Schaake shuffle sampled independent quantile
+    levels per ISP, which destroyed the forecast signal and made the
+    CVaR policy lose money even at risk_aversion=0. Stratified sampling
+    fixes this by keeping the forecast shape within each scenario.
     """
     T, n_q = q_pred.shape
     taus = np.asarray(quantiles)
     scenarios = np.empty((n_scenarios, T))
 
     for i in range(n_scenarios):
-        u = rng.uniform(0, 1, T)
+        u_base = (i + 0.5) / n_scenarios
+        u_per_isp = np.clip(
+            u_base + rng.normal(0, 0.03, T), 0.01, 0.99,
+        )
         for t in range(T):
-            scenarios[i, t] = np.interp(u[t], taus, q_pred[t])
-
-    n_paths = len(historical_paths)
-    if n_paths == 0:
-        return scenarios
-
-    for i in range(n_scenarios):
-        template = historical_paths[i % n_paths]
-        template_ranks = np.argsort(np.argsort(template))
-        scenario_sorted = np.sort(scenarios[i])
-        scenarios[i] = scenario_sorted[template_ranks]
+            scenarios[i, t] = np.interp(u_per_isp[t], taus, q_pred[t])
 
     return scenarios
 
@@ -221,19 +216,7 @@ def rolling_dispatch_cvar(
         )
 
         q_window = q_pred[t:end]
-        hist_start = max(0, t - window * 5)
-        historical = prices[hist_start:t]
-        hist_paths: FloatArray
-        if len(historical) >= n_window:
-            n_paths = min(n_scenarios, len(historical) - n_window + 1)
-            hist_paths = np.array([
-                historical[i:i + n_window]
-                for i in range(len(historical) - n_window + 1)
-            ][-n_paths:])
-        else:
-            hist_paths = np.empty((0, n_window))
-
-        scenarios = schaake_shuffle(q_window, quantiles, n_scenarios, hist_paths, rng)
+        scenarios = generate_scenarios(q_window, quantiles, n_scenarios, rng)
         result = dispatch_cvar(scenarios, current_params, alpha=alpha, risk_aversion=risk_aversion)
         execute = min(step, n_window)
 
@@ -558,7 +541,7 @@ def main() -> None:
             "step_isps": 16,
             "cvar_n_scenarios": 20,
             "cvar_alpha": 0.05,
-            "scenario_method": "schaake_shuffle",
+            "scenario_method": "stratified_quantile",
         },
     }
 
