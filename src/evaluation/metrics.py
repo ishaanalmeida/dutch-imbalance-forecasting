@@ -224,6 +224,18 @@ def holm_bonferroni(
     return results
 
 
+def mae(y_true: FloatArray, y_pred: FloatArray) -> float:
+    """Mean absolute error. Secondary metric for literature comparability."""
+    _check_1d(y_true, y_pred)
+    return float(np.mean(np.abs(y_true - y_pred)))
+
+
+def rmse(y_true: FloatArray, y_pred: FloatArray) -> float:
+    """Root mean squared error. Secondary metric for literature comparability."""
+    _check_1d(y_true, y_pred)
+    return float(np.sqrt(np.mean((y_true - y_pred) ** 2)))
+
+
 def brier_score(y_true: FloatArray, p_pred: FloatArray) -> float:
     """Mean squared error of a probability forecast. Lower is better."""
     _check_1d(y_true, p_pred)
