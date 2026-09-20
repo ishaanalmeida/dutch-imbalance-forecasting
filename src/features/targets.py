@@ -11,6 +11,8 @@ from datetime import UTC, datetime
 
 import pandas as pd
 
+from src.data.timebase import require_aware_index as _require_aware
+
 # ADR-022: dual pricing runs ~6% of ISPs before PICASSO and 26-40% after.
 # Training across the boundary miscalibrates P(dual), which is the quantity
 # deciding whether risk-aware dispatch beats deterministic.
@@ -21,12 +23,6 @@ HOLDOUT_START = datetime(2026, 5, 1, tzinfo=UTC)
 HOLDOUT_END = datetime(2026, 8, 1, tzinfo=UTC)
 
 _PRICE_EPS = 1e-9
-
-
-def _require_aware(df: pd.DataFrame) -> pd.DataFrame:
-    if df.index.tz is None:  # type: ignore[attr-defined]
-        raise ValueError("targets require a tz-aware UTC index; got a naive one")
-    return df
 
 
 def build_targets(df: pd.DataFrame) -> pd.DataFrame:
@@ -41,7 +37,7 @@ def build_targets(df: pd.DataFrame) -> pd.DataFrame:
     Note it is a LOWER BOUND on regulation state 2: a fully reverse-priced
     state-2 ISP collapses both legs to the mid-price and is labelled False.
     """
-    _require_aware(df)
+    _require_aware(df, "targets")
     out = df.copy()
     out["is_dual_priced"] = (out["price_long"] - out["price_short"]).abs() > _PRICE_EPS
     if "day_ahead_price" in out.columns:
@@ -52,12 +48,12 @@ def build_targets(df: pd.DataFrame) -> pd.DataFrame:
 
 def training_slice(df: pd.DataFrame) -> pd.DataFrame:
     """Post-PICASSO, holdout removed. The only frame training code may see."""
-    _require_aware(df)
+    _require_aware(df, "targets")
     return df[(df.index >= PICASSO_START) & (df.index < HOLDOUT_START)]
 
 
 def holdout_slice(df: pd.DataFrame) -> pd.DataFrame:
     """The reserved window. Calling this outside the final evaluation is a
     protocol violation, not a convenience."""
-    _require_aware(df)
+    _require_aware(df, "targets")
     return df[(df.index >= HOLDOUT_START) & (df.index < HOLDOUT_END)]

@@ -248,9 +248,11 @@ publication:
       periods -- exactly the conditions where a battery earns most and where a
       TSO is most likely to intervene. ADR-017 established from TenneT's own
       API docs that the delay is "configurable", i.e. a knob they turn.
-      The 630 samples span only 1.0 second end to end (stdev 0.29s), which is
-      consistent with a deterministic configured constant rather than a noisy
-      pipeline -- but that is evidence about this window, not about all windows.
+      The superseded 630-sample/2.18h measurement (lag_history below) looked
+      deterministic, spanning only 1.0 second end to end -- this 974-sample
+      measurement disproves that: see time_of_day_variation above, a ~24s
+      range across two clusters plus an outlier. Not constant even within
+      this window, so treat every window, including this one, as provisional.
       RE-MEASURE across a full 24h before any headline revenue figure depends
       on it, and re-measure again if TenneT announces a platform change.
     lag_history:

@@ -77,22 +77,40 @@ def test_climatology_falls_back_to_the_global_distribution_for_unseen_groups() -
     assert np.isfinite(pred).all()
 
 
-def test_seasonal_naive_uses_the_requested_lag() -> None:
-    X = _frame()
-    y = pd.Series(np.arange(len(X), dtype=float), index=X.index)
+def test_seasonal_naive_reads_the_matching_masked_lag_column() -> None:
+    X = _frame(10).assign(lag_price_short_96=np.arange(10, dtype=float))
     model = SeasonalNaiveBaseline(period_isps=96)
-    model.fit(X, y)
+    model.fit(X, pd.Series(np.zeros(len(X)), index=X.index))
     pred = model.predict_quantiles(X, (0.5,))[:, 0]
-    assert np.allclose(pred[96:], y.to_numpy()[:-96])
+    assert np.allclose(pred, X["lag_price_short_96"].to_numpy())
 
 
-def test_seasonal_naive_has_no_nan_at_the_start() -> None:
-    """The first `period` rows have no history; they must be filled, not NaN."""
-    X = _frame(200)
-    y = pd.Series(np.arange(len(X), dtype=float), index=X.index)
+def test_seasonal_naive_works_on_a_disjoint_test_index() -> None:
+    """Regression: fitting on a training fold then predicting on a later,
+    non-overlapping test fold must not produce NaN. It used to -- the old
+    implementation shifted the stored training target and reindexed onto the
+    test index, and a disjoint index never overlaps its own shift."""
+    train_idx = pd.date_range("2025-01-01", periods=96, freq="15min", tz="UTC")
+    X_train = pd.DataFrame(
+        {"lag_price_short_96": np.arange(96, dtype=float)}, index=train_idx
+    )
+    test_idx = pd.date_range("2025-02-01", periods=10, freq="15min", tz="UTC")
+    X_test = pd.DataFrame(
+        {"lag_price_short_96": np.arange(100, 110, dtype=float)}, index=test_idx
+    )
+
     model = SeasonalNaiveBaseline(period_isps=96)
-    model.fit(X, y)
-    assert np.isfinite(model.predict_quantiles(X, (0.5,))).all()
+    model.fit(X_train, pd.Series(np.zeros(len(X_train)), index=X_train.index))
+    pred = model.predict_quantiles(X_test, (0.5,))[:, 0]
+    assert np.isfinite(pred).all()
+    assert np.allclose(pred, X_test["lag_price_short_96"].to_numpy())
+
+
+def test_seasonal_naive_requires_the_matching_lag_column() -> None:
+    X = _frame(10)
+    model = SeasonalNaiveBaseline(period_isps=672)
+    with pytest.raises(ValueError, match="lag_price_short_672"):
+        model.fit(X, pd.Series(np.zeros(len(X)), index=X.index))
 
 
 def test_day_ahead_baseline_predicts_the_day_ahead_price() -> None:

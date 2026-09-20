@@ -51,20 +51,33 @@ class PersistenceBaseline:
 
 
 class SeasonalNaiveBaseline:
-    """Same ISP, `period_isps` ago. 96 = yesterday, 672 = last week."""
+    """Same ISP, `period_isps` ago. 96 = yesterday, 672 = last week.
+
+    Reads the feature builder's own availability-masked `lag_price_short_*`
+    column for this lag rather than re-shifting the training target: the
+    target is only ever the training fold's y, so shifting it and reindexing
+    onto a disjoint test fold's index produced NaN for every test row (the
+    shift/reindex never overlapped). The lag column is built once across the
+    full history and already carries the right value for any row, train or
+    test, with R1 masking applied -- exactly how PersistenceBaseline reads
+    `lag_price_short_freshest` instead of storing training state.
+    """
 
     def __init__(self, period_isps: int = 96) -> None:
         self.period_isps = period_isps
+        self._column = f"lag_price_short_{period_isps}"
 
     def fit(self, X: pd.DataFrame, y: pd.Series[Any]) -> None:
-        self._train_y = y.astype(float)
+        if self._column not in X.columns:
+            raise ValueError(
+                f"SeasonalNaiveBaseline(period_isps={self.period_isps}) needs "
+                f"column {self._column!r}, which src.features.builder does not "
+                "catalogue for this lag"
+            )
+        self._fitted = True
 
     def predict_quantiles(self, X: pd.DataFrame, quantiles: tuple[float, ...]) -> FloatArray:
-        shifted = self._train_y.shift(self.period_isps)
-        # bfill then a global mean: the first `period` rows have no history,
-        # and leaving them NaN would silently drop rows from every metric.
-        filled = shifted.bfill().fillna(float(self._train_y.mean()))
-        return _broadcast(filled.reindex(X.index).to_numpy(dtype=float), len(quantiles))
+        return _broadcast(X[self._column].to_numpy(dtype=float), len(quantiles))
 
 
 class ClimatologyBaseline:

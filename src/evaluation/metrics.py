@@ -23,11 +23,30 @@ QUANTILES: tuple[float, ...] = tuple(round(0.05 * i, 2) for i in range(1, 20))
 _LOG_EPS = 1e-15
 
 
+def _check_no_nan(*arrays: FloatArray) -> None:
+    """Refuse rather than guess: a NaN target/prediction silently mis-scores
+    as "covered" (empirical_coverage) or "above the top quantile" (pit_values)
+    instead of raising, which would quietly distort a calibration report with
+    no warning (docs/DECISIONS.md ADR-025). Every metric in this rigour-zone
+    module goes through this, so a caller with e.g. dual-pricing NaN targets
+    must filter them before scoring, not rely on this module to guess."""
+    for arr in arrays:
+        if np.isnan(arr).any():
+            raise ValueError("NaN in metric input: filter it before scoring, do not let this guess")
+
+
 def _check(y_true: FloatArray, q_pred: FloatArray, quantiles: tuple[float, ...]) -> None:
     if q_pred.ndim != 2 or q_pred.shape != (len(y_true), len(quantiles)):
         raise ValueError(
             f"shape mismatch: expected q_pred {(len(y_true), len(quantiles))}, got {q_pred.shape}"
         )
+    _check_no_nan(y_true, q_pred)
+
+
+def _check_1d(y_true: FloatArray, p_pred: FloatArray) -> None:
+    if y_true.shape != p_pred.shape:
+        raise ValueError(f"shape mismatch: {y_true.shape} vs {p_pred.shape}")
+    _check_no_nan(y_true, p_pred)
 
 
 def pinball_loss(
@@ -104,7 +123,8 @@ def pit_values(y_true: FloatArray, q_pred: FloatArray, quantiles: tuple[float, .
         lo_val, hi_val = q_int[rows, k], q_int[rows, k + 1]
         lo_tau, hi_tau = taus[k], taus[k + 1]
         span = hi_val - lo_val
-        frac = np.where(span > 0, (y_int - lo_val) / np.where(span > 0, span, 1.0), 0.5)
+        nonzero = span > 0
+        frac = np.where(nonzero, (y_int - lo_val) / np.where(nonzero, span, 1.0), 0.5)
         pit[interior] = lo_tau + frac * (hi_tau - lo_tau)
     return np.asarray(pit)
 
@@ -120,8 +140,7 @@ def enforce_monotone(q_pred: FloatArray) -> FloatArray:
 
 def brier_score(y_true: FloatArray, p_pred: FloatArray) -> float:
     """Mean squared error of a probability forecast. Lower is better."""
-    if y_true.shape != p_pred.shape:
-        raise ValueError(f"shape mismatch: {y_true.shape} vs {p_pred.shape}")
+    _check_1d(y_true, p_pred)
     return float(np.mean((p_pred - y_true) ** 2))
 
 
@@ -131,7 +150,6 @@ def log_loss_binary(y_true: FloatArray, p_pred: FloatArray) -> float:
     Clipping matters: an unclipped zero probability returns inf and destroys a
     whole run's mean, turning one confident mistake into an unusable report.
     """
-    if y_true.shape != p_pred.shape:
-        raise ValueError(f"shape mismatch: {y_true.shape} vs {p_pred.shape}")
+    _check_1d(y_true, p_pred)
     p = np.clip(p_pred, _LOG_EPS, 1.0 - _LOG_EPS)
     return float(-np.mean(y_true * np.log(p) + (1.0 - y_true) * np.log(1.0 - p)))

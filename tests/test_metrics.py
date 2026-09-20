@@ -112,3 +112,23 @@ def test_log_loss_is_finite_for_a_zero_probability() -> None:
 def test_mismatched_shapes_raise() -> None:
     with pytest.raises(ValueError, match="shape"):
         pinball_loss(np.array([1.0, 2.0]), np.array([[1.0]]), (0.5,))
+
+
+def test_1d_metrics_also_reject_mismatched_shapes() -> None:
+    with pytest.raises(ValueError, match="shape"):
+        brier_score(np.array([1.0, 0.0]), np.array([1.0]))
+    with pytest.raises(ValueError, match="shape"):
+        log_loss_binary(np.array([1.0, 0.0]), np.array([1.0]))
+
+
+def test_nan_target_raises_instead_of_silently_mis_scoring() -> None:
+    """A NaN target (e.g. a dual-pricing leg that does not apply this ISP)
+    must never be silently scored as 'covered' or 'above the top quantile'."""
+    y = np.array([1.0, np.nan])
+    q = np.array([[0.0, 1.0], [0.0, 1.0]])
+    with pytest.raises(ValueError, match="NaN"):
+        empirical_coverage(y, q, (0.25, 0.75))
+    with pytest.raises(ValueError, match="NaN"):
+        pit_values(y, q, (0.25, 0.75))
+    with pytest.raises(ValueError, match="NaN"):
+        brier_score(y, np.array([0.5, 0.5]))

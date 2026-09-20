@@ -57,7 +57,14 @@ def _spec(field: str) -> dict[str, object]:
     return dict(publication[field])
 
 
-def _require_aware(ts: datetime, label: str) -> datetime:
+def require_aware(ts: datetime, label: str) -> datetime:
+    """Shared tz-aware guard for a labelled datetime.
+
+    Public so src/data/vintage.py and src/evaluation/walkforward.py can share
+    it instead of each reimplementing the identical check -- three copies of
+    one guard is exactly the drift risk CLAUDE.md's rigour-zone rules exist to
+    prevent (docs/DECISIONS.md ADR-025).
+    """
     if ts.tzinfo is None or ts.tzinfo.utcoffset(ts) is None:
         raise ValueError(f"{label} must be timezone-aware, got naive {ts!r}")
     return ts
@@ -145,7 +152,7 @@ def available_at(field: str, target_period_start: datetime, vintage: str | None 
     requested that does not exist, and ValueError if `target_period_start` is
     naive or not aligned to an ISP boundary.
     """
-    target_period_start = _require_aware(target_period_start, "target_period_start")
+    target_period_start = require_aware(target_period_start, "target_period_start")
     target_period_start = _require_isp_aligned(target_period_start.astimezone(UTC))
     spec = _spec(field)
 
@@ -251,7 +258,7 @@ def is_available(
     instant is not usable, because "published at" and "retrievable strictly
     before" are not the same guarantee.
     """
-    decision_time = _require_aware(decision_time, "decision_time")
+    decision_time = require_aware(decision_time, "decision_time")
     return available_at(field, target_period_start, vintage) < decision_time.astimezone(UTC)
 
 

@@ -9,8 +9,12 @@ one-ISP lag is *never* available (removed from the catalogue entirely) and
 `lag_price_short_96` (yesterday, same ISP) is only available for decisions
 taken after ~10:00 local -- roughly 43% of ISPs are masked. NaN is the
 truthful encoding of "not yet known", not an error: unavailability is a
-legitimate per-row state here, so masking never raises. A catalogue entry
-naming a `source_field` that `data_availability` has no basis to serve at all
+legitimate per-row state, so masking a subset of rows never raises. A lag
+unavailable for EVERY row of a multi-day window is not a per-row state, it is
+a catalogue entry naming a lag the publication rule can never satisfy --
+`_masked_lag` raises on that case (ADR-025), which is exactly what
+`lag_price_short_1` turned out to be (ADR-023). A catalogue entry naming a
+`source_field` that `data_availability` has no basis to serve at all
 (`UnresolvedLagError`) is a different, genuine bug and is left to propagate.
 
 Lags are expressed in ISPs and applied by shifting, which is safe because the
@@ -30,18 +34,15 @@ import numpy as np
 import pandas as pd
 
 from src.data.data_availability import is_available
+from src.data.quality import gap_report
 from src.data.timebase import ISP_MINUTES
+from src.data.timebase import require_aware_index as _require_aware
 from src.features.catalogue import CATALOGUE, FeatureSpec
 
 __all__ = ["CATALOGUE", "FeatureSpec", "build_features", "render_catalogue_markdown"]
 
 _SETTLED = "imbalance_price_settled"
-
-
-def _require_aware(df: pd.DataFrame) -> pd.DataFrame:
-    if df.index.tz is None:  # type: ignore[attr-defined]
-        raise ValueError("features require a tz-aware UTC index; got a naive one")
-    return df
+_ISPS_PER_DAY = 24 * 60 // ISP_MINUTES
 
 
 def _require_gapfree_grid(idx: pd.DatetimeIndex) -> None:
@@ -50,12 +51,11 @@ def _require_gapfree_grid(idx: pd.DatetimeIndex) -> None:
     A gap turns `shift(96)` into "96 rows back" rather than "24 hours back" --
     silently a different, wrong feature, with no error to notice. Cheap to
     check up front; expensive to discover as an unexplained model edge later.
+    Delegates the actual gap arithmetic to `src.data.quality.gap_report`
+    rather than re-deriving it, so a correction there (e.g. for duplicate
+    timestamps) is inherited here too (docs/DECISIONS.md ADR-025).
     """
-    if len(idx) < 2:
-        return
-    step = pd.Timedelta(minutes=ISP_MINUTES)
-    deltas = pd.Series(idx).diff().iloc[1:]
-    if not bool((deltas == step).all()):
+    if not gap_report(pd.DataFrame(index=idx)).empty:
         raise ValueError(
             f"features require a gap-free {ISP_MINUTES}-minute ISP grid; "
             "found irregular spacing in the price index"
@@ -82,12 +82,29 @@ def _availability_mask(idx: pd.DatetimeIndex, field: str, lag_isps: int) -> pd.S
 
 
 def _masked_lag(
-    series: pd.Series[float], idx: pd.DatetimeIndex, field: str, lag_isps: int
+    series: pd.Series[float],
+    mask: pd.Series[bool],
+    field: str,
+    lag_isps: int,
 ) -> pd.Series[float]:
     """`series` shifted by `lag_isps`, with rows the decision could not yet
-    see forced to NaN on top of whatever `shift` already leaves NaN."""
-    shifted = series.shift(lag_isps)
-    return shifted.where(_availability_mask(idx, field, lag_isps))
+    see forced to NaN on top of whatever `shift` already leaves NaN.
+
+    Raises if `mask` is False for every one of a multi-day window: that is
+    not a per-row state, it is the catalogue naming a lag the field's
+    publication rule can never satisfy for any decision time -- exactly what
+    `lag_price_short_1` turned out to be (ADR-023), caught there only by a
+    human noticing an all-NaN column. Raising here makes the "impossible by
+    construction" guarantee real instead of test-dependent (ADR-025).
+    """
+    if len(mask) >= _ISPS_PER_DAY and not bool(mask.any()):
+        raise ValueError(
+            f"{field!r} at lag {lag_isps} ISPs is unavailable for every one of "
+            f"{len(mask)} rows spanning at least a day -- this lag is "
+            "structurally impossible under the field's publication rule, not "
+            "a per-row state. Remove it from the catalogue or fix the lag."
+        )
+    return series.shift(lag_isps).where(mask)
 
 
 def build_features(prices: pd.DataFrame, day_ahead: pd.Series[Any] | None = None) -> pd.DataFrame:
@@ -107,22 +124,30 @@ def build_features(prices: pd.DataFrame, day_ahead: pd.Series[Any] | None = None
     short = prices["price_short"].astype(float)
     spread = (prices["price_long"] - prices["price_short"]).abs().astype(float)
 
-    out["lag_price_short_96"] = _masked_lag(short, idx, _SETTLED, 96)
-    out["lag_price_short_192"] = _masked_lag(short, idx, _SETTLED, 192)
+    # lag_price_short_96 and lag_spread_96 share the same (field, lag) pair,
+    # so they share the same availability mask -- computed once and reused
+    # rather than re-running the per-row is_available loop twice (ADR-025).
+    mask_96 = _availability_mask(idx, _SETTLED, 96)
+    out["lag_price_short_96"] = _masked_lag(short, mask_96, _SETTLED, 96)
+    out["lag_price_short_192"] = _masked_lag(
+        short, _availability_mask(idx, _SETTLED, 192), _SETTLED, 192
+    )
     out["lag_price_short_freshest"] = out["lag_price_short_96"].where(
         out["lag_price_short_96"].notna(), out["lag_price_short_192"]
     )
-    out["lag_price_short_672"] = _masked_lag(short, idx, _SETTLED, 672)
-    out["lag_spread_96"] = _masked_lag(spread, idx, _SETTLED, 96)
+    out["lag_price_short_672"] = _masked_lag(
+        short, _availability_mask(idx, _SETTLED, 672), _SETTLED, 672
+    )
+    out["lag_spread_96"] = _masked_lag(spread, mask_96, _SETTLED, 96)
 
-    hour = idx.hour.to_numpy(dtype=float)
-    dow = idx.dayofweek.to_numpy(dtype=float)
+    hour_int, dow_int = idx.hour, idx.dayofweek
+    hour, dow = hour_int.to_numpy(dtype=float), dow_int.to_numpy(dtype=float)
     out["hour_sin"] = np.sin(2 * np.pi * hour / 24.0)
     out["hour_cos"] = np.cos(2 * np.pi * hour / 24.0)
     out["dow_sin"] = np.sin(2 * np.pi * dow / 7.0)
     out["dow_cos"] = np.cos(2 * np.pi * dow / 7.0)
-    out["hour"] = idx.hour
-    out["dayofweek"] = idx.dayofweek
+    out["hour"] = hour_int
+    out["dayofweek"] = dow_int
 
     out["day_ahead_price"] = (
         day_ahead.reindex(idx).astype(float) if day_ahead is not None else np.nan

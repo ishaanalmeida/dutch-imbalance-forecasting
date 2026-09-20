@@ -37,17 +37,13 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
+from src.data.data_availability import require_aware as _require_aware
+
 VINTAGE_ROOT = Path(__file__).resolve().parents[2] / "vintage_log"
 
 UTC = ZoneInfo("UTC")
 _OBSERVED = "observed_at"
 _TARGET = "target_time"
-
-
-def _require_aware(ts: datetime, label: str) -> datetime:
-    if ts.tzinfo is None or ts.tzinfo.utcoffset(ts) is None:
-        raise ValueError(f"{label} must be timezone-aware, got naive {ts!r}")
-    return ts
 
 
 def _dataset_dir(dataset: str) -> Path:

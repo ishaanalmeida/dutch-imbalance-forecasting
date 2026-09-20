@@ -66,6 +66,18 @@ def test_naive_datetimes_are_rejected() -> None:
         generate_folds(datetime(2025, 4, 1), datetime(2025, 6, 1, tzinfo=UTC))
 
 
+def test_a_large_purge_on_an_early_fold_raises_instead_of_inverting() -> None:
+    """A non-default purge larger than the gap from PICASSO_START to the first
+    test month's snapped start must raise, not silently produce a Fold with
+    train_end < train_start (docs/DECISIONS.md ADR-025)."""
+    with pytest.raises(ValueError, match="train_end"):
+        generate_folds(
+            PICASSO_START,
+            datetime(2025, 1, 1, tzinfo=UTC),
+            purge=timedelta(days=20),
+        )
+
+
 def test_fold_is_immutable() -> None:
     """A fold mutated mid-run silently changes what a result refers to."""
     folds = generate_folds(datetime(2025, 4, 1, tzinfo=UTC), datetime(2025, 6, 1, tzinfo=UTC))

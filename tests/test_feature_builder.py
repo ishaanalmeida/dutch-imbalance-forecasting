@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import cast
 
 import numpy as np
 import pandas as pd
 import pytest
 
-from src.features.builder import CATALOGUE, build_features, render_catalogue_markdown
+from src.features.builder import CATALOGUE, _masked_lag, build_features, render_catalogue_markdown
+
+_FEATURES_MD = Path(__file__).resolve().parents[1] / "docs" / "FEATURES.md"
 
 
 def _prices(n: int = 96 * 10) -> pd.DataFrame:
@@ -135,3 +138,22 @@ def test_yesterdays_price_is_masked_before_the_settlement_run() -> None:
     out = build_features(_prices(96 * 5))
     col = out["lag_price_short_96"].dropna()
     assert 0 < len(col) < len(out), "expected a partial mask, not all-or-nothing"
+
+
+def test_masked_lag_raises_when_never_available_across_a_multi_day_window() -> None:
+    """The general form of the lag_price_short_1 bug ADR-023 found and removed:
+    a lag unavailable for every row of a multi-day window is a catalogue bug,
+    not a per-row state, and must raise rather than silently produce an
+    all-NaN column (docs/DECISIONS.md ADR-025)."""
+    idx = pd.date_range("2025-01-01", periods=96 * 2, freq="15min", tz="UTC")
+    series = pd.Series(np.arange(len(idx), dtype=float), index=idx)
+    never_available = pd.Series(False, index=idx)
+    with pytest.raises(ValueError, match="structurally impossible"):
+        _masked_lag(series, never_available, "some_field", 1)
+
+
+def test_docs_features_md_matches_the_generated_markdown() -> None:
+    """docs/FEATURES.md declares itself generated and 'do not edit by hand' --
+    nothing else enforced that until now, so a catalogue edit could silently
+    leave the checked-in doc stale (docs/DECISIONS.md ADR-025)."""
+    assert _FEATURES_MD.read_text(encoding="utf-8") == render_catalogue_markdown()

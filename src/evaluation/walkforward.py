@@ -20,6 +20,7 @@ from datetime import datetime, timedelta
 
 import pandas as pd
 
+from src.data.data_availability import require_aware as _require_aware
 from src.features.targets import HOLDOUT_START, PICASSO_START
 
 DEFAULT_PURGE = timedelta(days=1)
@@ -39,12 +40,6 @@ class Fold:
     def label(self) -> str:
         """Stable identifier for reporting, e.g. '2025-04'."""
         return f"{self.test_start:%Y-%m}"
-
-
-def _require_aware(ts: datetime, name: str) -> datetime:
-    if ts.tzinfo is None or ts.tzinfo.utcoffset(ts) is None:
-        raise ValueError(f"{name} must be timezone-aware, got naive {ts!r}")
-    return ts
 
 
 def generate_folds(
@@ -78,10 +73,23 @@ def generate_folds(
         test_start_dt = test_start.to_pydatetime()
         if test_end > HOLDOUT_START:
             break  # never touch the holdout, and never truncate a fold
+        train_end = test_start_dt - purge
+        if train_end < PICASSO_START:
+            # Only the input's month-start snapping keeps this from firing
+            # under the default purge; a caller-supplied purge tied to some
+            # other field's lag could still invert the window, and a fold
+            # with train_end < train_start must never reach a training loop
+            # silently (docs/DECISIONS.md ADR-025).
+            raise ValueError(
+                f"purge {purge} pushes train_end ({train_end.isoformat()}) "
+                f"before train_start ({PICASSO_START.isoformat()}) for test "
+                f"month {test_start_dt.isoformat()}. Shrink purge or move "
+                "first_test_month later."
+            )
         folds.append(
             Fold(
                 train_start=PICASSO_START,
-                train_end=test_start_dt - purge,
+                train_end=train_end,
                 test_start=test_start_dt,
                 test_end=test_end,
             )
