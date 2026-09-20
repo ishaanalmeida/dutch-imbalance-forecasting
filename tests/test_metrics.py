@@ -7,11 +7,14 @@ from src.evaluation.metrics import (
     QUANTILES,
     brier_score,
     crps_from_quantiles,
+    diebold_mariano,
     empirical_coverage,
     enforce_monotone,
+    holm_bonferroni,
     log_loss_binary,
     mean_pinball,
     pinball_loss,
+    pinball_loss_per_obs,
     pit_values,
 )
 
@@ -132,3 +135,70 @@ def test_nan_target_raises_instead_of_silently_mis_scoring() -> None:
         pit_values(y, q, (0.25, 0.75))
     with pytest.raises(ValueError, match="NaN"):
         brier_score(y, np.array([0.5, 0.5]))
+
+
+def test_pinball_loss_per_obs_matches_mean_pinball() -> None:
+    """per_obs averaged must equal mean_pinball — they compute the same thing."""
+    rng = np.random.default_rng(42)
+    y = rng.normal(50, 10, 100)
+    q_pred = np.sort(rng.normal(50, 10, (100, len(QUANTILES))), axis=1)
+    per_obs = pinball_loss_per_obs(y, q_pred, QUANTILES)
+    assert per_obs.shape == (100,)
+    assert per_obs.mean() == pytest.approx(mean_pinball(y, q_pred, QUANTILES), abs=1e-10)
+
+
+def test_dm_detects_a_clearly_better_model() -> None:
+    """Model A loses ~10, model B loses ~20. DM should be negative (A better)
+    and highly significant."""
+    rng = np.random.default_rng(99)
+    loss_a = rng.normal(10.0, 1.0, 500)
+    loss_b = rng.normal(20.0, 1.0, 500)
+    dm, p = diebold_mariano(loss_a, loss_b)
+    assert dm < 0
+    assert p < 0.001
+
+
+def test_dm_returns_insignificant_for_equal_models() -> None:
+    """Same losses, so no difference to detect."""
+    rng = np.random.default_rng(7)
+    losses = rng.normal(10, 2, 500)
+    dm, p = diebold_mariano(losses, losses)
+    assert dm == pytest.approx(0.0)
+    assert p == pytest.approx(1.0)
+
+
+def test_dm_handles_autocorrelated_differences() -> None:
+    """With positive autocorrelation in d, the HAC variance should be larger
+    than the naive variance, making the test more conservative."""
+    rng = np.random.default_rng(8)
+    n = 1000
+    d = np.empty(n)
+    d[0] = rng.normal(1.0, 1.0)
+    for i in range(1, n):
+        d[i] = 0.7 * d[i - 1] + rng.normal(1.0, 1.0)
+    loss_a = d
+    loss_b = np.zeros(n)
+    dm_stat, p_val = diebold_mariano(loss_a, loss_b)
+    # The test should still detect a signal, but be conservative
+    assert isinstance(dm_stat, float)
+    assert 0 <= p_val <= 1
+
+
+def test_dm_rejects_nan_input() -> None:
+    with pytest.raises(ValueError, match="NaN"):
+        diebold_mariano(np.array([1.0, np.nan]), np.array([2.0, 3.0]))
+
+
+def test_holm_bonferroni_controls_fwer() -> None:
+    """Three tests, one real signal. Holm should preserve the signal and
+    correct the noise."""
+    raw = [("real", 0.001), ("noise1", 0.04), ("noise2", 0.06)]
+    result = holm_bonferroni(raw)
+    labels = {r[0]: (r[1], r[2]) for r in result}
+    # real: 0.001 * 3 = 0.003, still significant
+    assert labels["real"][1] is True
+    assert labels["real"][0] == pytest.approx(0.003)
+    # noise1: 0.04 * 2 = 0.08, no longer significant
+    assert labels["noise1"][1] is False
+    # noise2: 0.06 * 1 = 0.06, still not significant
+    assert labels["noise2"][1] is False

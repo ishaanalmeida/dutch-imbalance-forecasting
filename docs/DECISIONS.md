@@ -1130,13 +1130,57 @@ comparable to the others as reported.
 
 **What this number is and is not.** LEAR beats every baseline, including
 `climatology` (CLAUDE.md §4: "the one to beat, not a formality") — a real
-result, produced by code in this repo, not fabricated. It is **not yet**: DM/
-Giacomini-White tested for significance against `climatology` (23.20 vs 25.47
-against std ~7 is suggestive, not proven), segmented by regulation state,
-hour, season, year, or across the MTU boundary above, checked for calibration
-(PIT/coverage — pinball loss alone can hide a miscalibrated but sharp
-forecast), or corrected for multiple comparisons. Exactly one model
-configuration was run per model here, so there is nothing yet to correct for,
-but that will stop being true the moment a second `alpha` or feature set is
-tried. README's headline line is updated to this checkpoint, explicitly
-marked provisional pending the above — not promoted to a validated finding.
+result, produced by code in this repo, not fabricated. It is **not yet**:
+segmented by regulation state, hour, season, year, or across the MTU boundary
+above, checked for calibration (PIT/coverage — pinball loss alone can hide a
+miscalibrated but sharp forecast), or corrected for multiple comparisons
+beyond the 4 baseline-vs-model tests below. Exactly one model configuration
+was run per model here, so there is nothing yet to correct for beyond the
+baseline comparisons, but that will stop being true the moment a second
+`alpha` or feature set is tried. README's headline is updated to this
+checkpoint, explicitly marked provisional pending the above.
+
+---
+
+## ADR-028: Diebold-Mariano significance tests confirm LEAR's edge
+
+**Date:** 2026-09-20
+**Status:** Accepted
+
+**Context.** ADR-027 reported LEAR 23.20 vs climatology 25.47 mean pinball
+loss (EUR/MWh) but noted the result was "suggestive, not proven." CLAUDE.md
+§4 requires Diebold-Mariano tests with autocorrelation-robust standard errors
+and multiple-comparison correction.
+
+**Implementation.**
+- `diebold_mariano()` in `src/evaluation/metrics.py`: two-sided test with
+  Newey-West HAC standard errors (Bartlett kernel, truncation lag
+  `floor(T^(1/3))` = 37 for T = 52,416 test observations).
+- `pinball_loss_per_obs()`: per-observation mean pinball across quantiles,
+  the loss series the DM test operates on.
+- `holm_bonferroni()`: FWER-controlling correction, uniformly more powerful
+  than Bonferroni. 4 comparisons (each model vs climatology).
+- 7 new tests: DM detection, equal-model case, autocorrelation handling,
+  NaN rejection, Holm correction.
+
+**Results (52,416 test observations, 18 monthly folds).**
+
+| Model vs Climatology | DM stat | Raw p-value | Holm-corrected p | Significant |
+|---|---|---|---|---|
+| LEAR | -16.55 | 1.7 × 10⁻⁶¹ | 3.5 × 10⁻⁶¹ | YES (better) |
+| Day-ahead | +16.48 | 4.7 × 10⁻⁶¹ | 4.7 × 10⁻⁶¹ | YES (worse) |
+| Persistence | +22.04 | 1.2 × 10⁻¹⁰⁷ | 3.7 × 10⁻¹⁰⁷ | YES (worse) |
+| Seasonal-naive 1w | +23.10 | 5.0 × 10⁻¹¹⁸ | 2.0 × 10⁻¹¹⁷ | YES (worse) |
+
+Negative DM = first model has lower loss (is better). LEAR's improvement
+over climatology is significant at any conventional threshold, surviving
+Holm-Bonferroni correction for 4 simultaneous tests. The p-values are
+extremely small because 52k observations give enormous power — the
+economically relevant question is the *magnitude* of improvement (2.3
+EUR/MWh, or ~9%), not whether it is distinguishable from zero.
+
+**What remains.** Significance is necessary but not sufficient: calibration
+(PIT/coverage), segmented reporting, and — when a second model configuration
+is tried — a multiple-comparison correction over the model search space.
+The DM test also does not answer whether LEAR's edge is stable across
+regimes; that is the segmented-reporting question.

@@ -17,19 +17,19 @@ publication latency, and an explicit market-impact model.
 | 5 — Demo | ⬜ |
 | 6 — Write-up | ⬜ |
 
-**Headline result (provisional checkpoint, not a validated finding):** on 18
+**Headline result (significance-tested, not yet calibration-checked):** on 18
 walk-forward folds (2024-11 through 2026-04, holdout untouched), an
 L1-regularised quantile-regression model (LEAR) scores **23.2 mean pinball
 loss (EUR/MWh)** predicting the imbalance short price, against 25.5 for the
-climatological baseline (CLAUDE.md's own "one to beat") and 42.5 for
-persistence. Produced by [`scripts/run_walkforward_evaluation.py`](scripts/run_walkforward_evaluation.py);
-full numbers and method in [`docs/DECISIONS.md`](docs/DECISIONS.md) ADR-027.
-**Not yet done:** significance testing (Diebold-Mariano) against the
-baselines, calibration/coverage, segmented reporting, or a check across the
-2025-10-01 day-ahead MTU change — so "LEAR wins" is not yet a claim this
-project is prepared to stand behind, only a number this project is prepared
-to show its work for. This file will carry no number that was not produced by
-code in this repo.
+climatological baseline and 42.5 for persistence. The improvement over
+climatology is statistically significant (Diebold-Mariano DM = -16.55,
+p < 10⁻⁶⁰, Holm-Bonferroni corrected over 4 comparisons; 52,416 test
+observations). Produced by [`scripts/run_walkforward_evaluation.py`](scripts/run_walkforward_evaluation.py);
+full numbers in [`docs/DECISIONS.md`](docs/DECISIONS.md) ADR-027/028.
+**Not yet done:** calibration/coverage (PIT histogram, reliability curves),
+segmented reporting (by regulation state, hour, season, year, and across the
+2025-10-01 day-ahead MTU change), or quantile-GBM. This file will carry no
+number that was not produced by code in this repo.
 
 ## What exists today
 

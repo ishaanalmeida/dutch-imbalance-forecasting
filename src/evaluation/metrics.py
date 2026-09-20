@@ -138,6 +138,92 @@ def enforce_monotone(q_pred: FloatArray) -> FloatArray:
     return np.asarray(np.sort(q_pred, axis=1))
 
 
+def pinball_loss_per_obs(
+    y_true: FloatArray, q_pred: FloatArray, quantiles: tuple[float, ...]
+) -> FloatArray:
+    """Mean pinball loss per observation (averaged across quantiles).
+
+    Returns shape (n,). Used for the Diebold-Mariano test, which needs a
+    per-observation loss series, not a per-quantile or scalar aggregate.
+    """
+    _check(y_true, q_pred, quantiles)
+    taus = np.asarray(quantiles)
+    error = y_true[:, None] - q_pred
+    loss = np.maximum(taus * error, (taus - 1.0) * error)
+    return np.asarray(loss.mean(axis=1))
+
+
+def diebold_mariano(
+    loss_a: FloatArray,
+    loss_b: FloatArray,
+    max_lag: int | None = None,
+) -> tuple[float, float]:
+    """Two-sided Diebold-Mariano test with Newey-West HAC standard errors.
+
+    Tests H0: E[L_a - L_b] = 0 (equal predictive accuracy).
+    Returns (dm_statistic, p_value_two_sided).
+
+    max_lag: truncation lag for the Bartlett kernel. Default floor(T^(1/3)),
+    the standard choice in the DM literature.
+    """
+    _check_no_nan(loss_a, loss_b)
+    if loss_a.shape != loss_b.shape or loss_a.ndim != 1:
+        raise ValueError(
+            f"loss arrays must be 1-D and same length, got {loss_a.shape} vs {loss_b.shape}"
+        )
+
+    d = loss_a - loss_b
+    T = len(d)
+    if T < 2:
+        raise ValueError(f"need at least 2 observations for DM test, got {T}")
+    d_bar = d.mean()
+
+    if max_lag is None:
+        max_lag = int(np.floor(T ** (1.0 / 3.0)))
+
+    gamma = np.empty(max_lag + 1)
+    d_centered = d - d_bar
+    for k in range(max_lag + 1):
+        gamma[k] = np.dot(d_centered[: T - k], d_centered[k:]) / T
+
+    # Newey-West (Bartlett kernel): var = gamma_0 + 2 * sum_{k=1}^{h} (1 - k/(h+1)) * gamma_k
+    weights = 1.0 - np.arange(1, max_lag + 1) / (max_lag + 1)
+    var_d_bar = (gamma[0] + 2.0 * np.dot(weights, gamma[1:])) / T
+
+    if var_d_bar <= 0:
+        return 0.0, 1.0
+
+    dm = d_bar / np.sqrt(var_d_bar)
+    from scipy.stats import norm
+
+    p_value = 2.0 * norm.sf(np.abs(dm))
+    return float(dm), float(p_value)
+
+
+def holm_bonferroni(
+    p_values: list[tuple[str, float]],
+) -> list[tuple[str, float, bool]]:
+    """Holm-Bonferroni correction for multiple comparisons.
+
+    Input: list of (label, raw_p_value).
+    Output: list of (label, adjusted_p_value, significant_at_005), sorted by
+    original p-value ascending.
+
+    Holm-Bonferroni controls FWER and is uniformly more powerful than
+    Bonferroni — CLAUDE.md §4 asks for the correction used to be stated.
+    """
+    m = len(p_values)
+    sorted_pv = sorted(p_values, key=lambda x: x[1])
+    results: list[tuple[str, float, bool]] = []
+    max_adj = 0.0
+    for i, (label, p) in enumerate(sorted_pv):
+        adj = min(p * (m - i), 1.0)
+        adj = max(adj, max_adj)
+        max_adj = adj
+        results.append((label, adj, adj < 0.05))
+    return results
+
+
 def brier_score(y_true: FloatArray, p_pred: FloatArray) -> float:
     """Mean squared error of a probability forecast. Lower is better."""
     _check_1d(y_true, p_pred)

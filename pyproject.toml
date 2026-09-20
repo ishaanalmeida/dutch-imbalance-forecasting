@@ -16,6 +16,7 @@ dependencies = [
     "entsoe-py==0.8.0",
     "numpy==1.26.4",
     "scikit-learn==1.9.1",
+    "scipy>=1.17.1",
 ]
 
 [dependency-groups]
@@ -50,4 +51,8 @@ files = ["src", "tests", "scripts"]
 
 [[tool.mypy.overrides]]
 module = "sklearn.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "scipy.*"
 ignore_missing_imports = true

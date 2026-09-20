@@ -1,6 +1,8 @@
 """Walk-forward evaluation: every mandatory baseline plus LEAR, on identical
 folds and identical data (CLAUDE.md R4). Phase 2's first real, measured
-result -- prints mean pinball loss per model per fold and overall.
+result -- prints mean pinball loss per model per fold and overall, then runs
+Diebold-Mariano significance tests comparing each model against the
+climatological baseline.
 
 T2 target: `price_short`, the settlement price a BRP shortage pays -- the
 concrete column every existing baseline's feature naming already points at
@@ -18,15 +20,23 @@ asks for -- that is the natural next slice, not done here.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TypeVar
 
 import numpy as np
 import pandas as pd
 
 from src.data import cache
-from src.evaluation.metrics import QUANTILES, mean_pinball
+from src.evaluation.metrics import (
+    QUANTILES,
+    diebold_mariano,
+    holm_bonferroni,
+    mean_pinball,
+    pinball_loss_per_obs,
+)
 from src.evaluation.walkforward import generate_folds
 from src.features.builder import build_features
 from src.features.targets import HOLDOUT_START, PICASSO_START, build_targets
@@ -47,6 +57,10 @@ MODEL_FACTORIES: dict[str, Callable[[], QuantileModel]] = {
     "day_ahead": DayAheadBaseline,
     "lear": LEARModel,
 }
+
+REFERENCE_MODEL = "climatology"
+
+RESULTS_DIR = Path("work/evaluation")
 
 
 def _resample_day_ahead(
@@ -78,7 +92,9 @@ def main() -> int:
     folds = generate_folds(datetime(2024, 11, 1, tzinfo=UTC), datetime(2026, 12, 1, tzinfo=UTC))
     print(f"{len(folds)} folds: {folds[0].label} .. {folds[-1].label}\n")
 
-    losses: dict[str, list[float]] = {name: [] for name in MODEL_FACTORIES}
+    fold_losses: dict[str, list[float]] = {name: [] for name in MODEL_FACTORIES}
+    per_obs_losses: dict[str, list[FloatArray]] = {name: [] for name in MODEL_FACTORIES}
+
     for fold in folds:
         X_train = _slice(X, fold.train_start, fold.train_end)
         y_train = _slice(y, fold.train_start, fold.train_end)
@@ -90,20 +106,87 @@ def main() -> int:
             try:
                 model.fit(X_train, y_train)
                 pred: FloatArray = model.predict_quantiles(X_test, QUANTILES)
-                loss = mean_pinball(y_test.to_numpy(), pred, QUANTILES)
-            except Exception as exc:  # a model failing one fold must not abort the run
+                y_arr = y_test.to_numpy()
+                loss = mean_pinball(y_arr, pred, QUANTILES)
+                obs_loss = pinball_loss_per_obs(y_arr, pred, QUANTILES)
+            except Exception as exc:
                 print(f"  {fold.label} {name:18s} FAILED: {exc!r}")
                 continue
-            losses[name].append(loss)
+            fold_losses[name].append(loss)
+            per_obs_losses[name].append(obs_loss)
         print(f"  {fold.label} done")
 
     print("\n=== Mean pinball loss across folds (EUR/MWh, lower is better) ===")
-    for name, values in losses.items():
+    for name, values in fold_losses.items():
         if values:
             mean, std = np.mean(values), np.std(values)
             print(f"{name:18s} n={len(values):2d}  mean={mean:.4f}  std={std:.4f}")
         else:
             print(f"{name:18s} n=0   (never produced a prediction)")
+
+    # --- Diebold-Mariano significance tests ---
+    ref_obs = per_obs_losses.get(REFERENCE_MODEL, [])
+    if not ref_obs:
+        print(f"\nReference model '{REFERENCE_MODEL}' produced no predictions; skipping DM tests.")
+        return 0
+
+    ref_concat = np.concatenate(ref_obs)
+    dm_results: list[tuple[str, float, float]] = []
+    raw_pvalues: list[tuple[str, float]] = []
+
+    print(f"\n=== Diebold-Mariano tests vs {REFERENCE_MODEL} (HAC standard errors) ===")
+    print(f"{'model':18s} {'DM stat':>10s} {'p-value':>10s} {'n_obs':>8s} {'max_lag':>8s}")
+
+    for name, obs_list in per_obs_losses.items():
+        if name == REFERENCE_MODEL or not obs_list:
+            continue
+        model_concat = np.concatenate(obs_list)
+        if len(model_concat) != len(ref_concat):
+            n_m, n_r = len(model_concat), len(ref_concat)
+            print(f"{name:18s}  SKIPPED: different n_obs ({n_m} vs {n_r})")
+            continue
+        max_lag = int(np.floor(len(model_concat) ** (1.0 / 3.0)))
+        dm_stat, p_val = diebold_mariano(model_concat, ref_concat, max_lag=max_lag)
+        dm_results.append((name, dm_stat, p_val))
+        raw_pvalues.append((name, p_val))
+        print(f"{name:18s} {dm_stat:10.4f} {p_val:10.6f} {len(model_concat):8d} {max_lag:8d}")
+
+    if raw_pvalues:
+        corrected = holm_bonferroni(raw_pvalues)
+        n_comparisons = len(raw_pvalues)
+        print(f"\n=== Holm-Bonferroni correction ({n_comparisons} comparisons) ===")
+        print(f"{'model':18s} {'adj p-value':>12s} {'sig at 5%':>10s}")
+        for label, adj_p, sig in corrected:
+            print(f"{label:18s} {adj_p:12.6f} {'YES' if sig else 'no':>10s}")
+
+    # Save results for downstream use
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    summary = {
+        "folds": len(folds),
+        "fold_range": f"{folds[0].label} .. {folds[-1].label}",
+        "reference_model": REFERENCE_MODEL,
+        "n_comparisons": len(raw_pvalues),
+        "correction": "Holm-Bonferroni",
+        "fold_losses": {
+            name: {"n": len(v), "mean": float(np.mean(v)), "std": float(np.std(v))}
+            for name, v in fold_losses.items()
+            if v
+        },
+        "dm_tests": [
+            {
+                "model": name, "dm_stat": dm, "p_value": p,
+                "n_obs": len(np.concatenate(per_obs_losses[name])),
+            } for name, dm, p in dm_results
+        ],
+        "holm_bonferroni": [
+            {"model": label, "adj_p_value": adj_p, "significant_005": sig}
+            for label, adj_p, sig in (corrected if raw_pvalues else [])
+        ],
+    }
+    results_path = RESULTS_DIR / "walkforward_results.json"
+    results_path.write_text(json.dumps(summary, indent=2))
+    print(f"\nResults saved to {results_path}")
+
     return 0
 
 
