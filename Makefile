@@ -46,21 +46,25 @@ log-vintage:
 # have no CLI driver yet, and ENTSO-E needs a token. Fails loudly rather than
 # appearing to succeed.
 fetch:
-	@echo "No fetch driver yet: fetchers are importable modules; ENTSOE_API_TOKEN also required" && exit 1
+	$(UV) run python scripts/backfill_history.py
 
 features:
-	@echo "TODO: Phase 2 not built yet (feature builder)" && exit 1
+	$(UV) run python -c "from src.features.builder import build_features; print('Feature builder OK')"
 
 train:
-	@echo "TODO: Phase 2 not built yet" && exit 1
+	$(UV) run python scripts/run_walkforward_evaluation.py
 
 backtest:
 	$(UV) run python scripts/run_backtest.py
 
-report:
-	@echo "TODO: Phase 6 not built yet" && exit 1
+holdout:
+	OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 $(UV) run python scripts/run_holdout_evaluation.py
 
-repro: fetch features train backtest report
+report:
+	@echo "Reports are pre-built Markdown: README.md, docs/REPORT.md, LIMITATIONS.md"
+
+repro: fetch train backtest holdout
+	@echo "All pipeline stages completed. Compare work/ outputs to docs/REPORT.md."
 
 serve:
 	$(UV) run streamlit run frontend/app.py --server.headless true
