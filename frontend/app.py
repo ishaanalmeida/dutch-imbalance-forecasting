@@ -131,7 +131,23 @@ with tab_forecast:
     if fc_log:
         latest = fc_log[-1]
         st.markdown(f"**Last forecast issued:** {latest['forecast_issued_at']}")
-        st.metric("Median forecast (next ISP)", f"EUR {latest['median']:.1f}/MWh")
+
+        col_m, col_r, col_d = st.columns(3)
+        col_m.metric("Median forecast (next ISP)", f"EUR {latest['median']:.1f}/MWh")
+
+        reg = latest.get("regulation_state", {})
+        if reg:
+            p_single = reg.get("single_price", 0)
+            p_dual = reg.get("dual_price", 0)
+            col_r.metric("Regulation State", f"{'Dual' if p_dual > p_single else 'Single'}-priced")
+            col_r.caption(f"Single: {p_single:.0%} · Dual: {p_dual:.0%}")
+
+        disp = latest.get("dispatch_recommendation", {})
+        if disp:
+            action = disp.get("action", "hold").upper()
+            colors = {"CHARGE": "🟢", "DISCHARGE": "🔴", "HOLD": "⚪"}
+            col_d.metric("Dispatch", f"{colors.get(action, '')} {action}")
+            col_d.caption(disp.get("reason", ""))
 
         recent = fc_log[-min(len(fc_log), 96):]
         fig_fc = go.Figure()

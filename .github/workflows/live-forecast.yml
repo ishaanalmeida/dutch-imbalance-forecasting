@@ -10,8 +10,6 @@ name: Live forecast
 on:
   schedule:
     # Every 15 minutes during peak hours (06-22 UTC), hourly otherwise.
-    # ISPs are 15 min, so this captures every decision point during
-    # active trading hours.
     - cron: "*/15 6-22 * * *"
     - cron: "0 0-5,23 * * *"
   workflow_dispatch:
@@ -38,6 +36,16 @@ jobs:
 
       - name: Sync dependencies
         run: uv sync --locked --dev
+
+      - name: Fetch recent data (last 3 months)
+        env:
+          ENTSOE_API_TOKEN: ${{ secrets.ENTSOE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          START=$(date -u -d "90 days ago" +%Y-%m-%d)
+          END=$(date -u +%Y-%m-%d)
+          echo "Fetching $START to $END"
+          uv run python -m scripts.backfill_history both "$START" "$END"
 
       - name: Produce forecast
         env:
