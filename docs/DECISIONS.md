@@ -1244,3 +1244,46 @@ any test module can trigger a pandas import. The dispatch tests were
 already isolated in `tests/cvxpy/` for the lightgbm variant of this
 conflict (ADR from previous session); this conftest makes it robust
 to import ordering within the cvxpy test directory.
+
+---
+
+## ADR-031 — Phase 4 backtest: deterministic captures 15.9% of PF, CVaR underperforms
+
+**Date**: 2026-09-20
+**Status**: accepted (finding)
+
+Walk-forward backtest over 18 monthly folds (2024-11 to 2026-04), 52,416 ISPs,
+10 MW / 40 MWh battery at EUR 5/MWh degradation.
+
+**Results:**
+- Perfect foresight: EUR 5,840,081 (upper bound)
+- Deterministic (rolling horizon, median forecast): EUR 929,535 (15.9% of PF)
+- CVaR (risk_aversion=0.5, Schaake shuffle, 20 scenarios): EUR -394,423 (loss)
+- Bootstrap 95% CI for deterministic: [681K, 1.20M]
+
+The 15.9% PF capture ratio is the headline number. Typical for public-data
+imbalance strategies in the literature (10–20%).
+
+**CVaR failure diagnosis:** the efficient frontier sweep shows even ra=0.0
+(pure expected value, no risk aversion) earns near-zero. Root cause: naive
+Schaake shuffle scenario generation averages out the forecast signal. Each
+scenario samples quantiles independently per ISP, then reorders by historical
+rank templates. The cross-scenario mean at each ISP is the expected value of
+the forecast distribution, not the median — and the signal-to-noise ratio
+across 20 scenarios is too low for the LP optimizer to find profitable
+charge/discharge patterns. The median forecast preserves the point signal
+that the deterministic optimizer exploits.
+
+**Improvement path (not implemented):** condition scenario deviations on the
+median rather than sampling the full marginal. Or: use a parametric copula
+(e.g., Gaussian copula on PIT-transformed quantile residuals) to generate
+scenarios that preserve both the marginal distribution and the conditional
+mean signal. This is a Phase 6 / stretch task.
+
+**Market impact model:** sqrt(capacity_mw / 500). Revenue-per-MW degrades from
+EUR 87,596/MW at 1 MW to EUR 39,383/MW at 100 MW. At 500 MW, the model says
+the signal is fully absorbed. This is a modelling choice (not measured) and
+is applied post-hoc to the deterministic dispatch (the battery doesn't
+re-optimize given the impact). The saturation curve is directionally correct
+but overstates losses at high capacity because it doesn't model the
+operator's exit decision.
