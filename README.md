@@ -5,25 +5,35 @@ state at 15-minute resolution, and battery dispatch optimised against the full
 predictive distribution — backtested under real settlement rules, real
 publication latency, and an explicit market-impact model.
 
-## Status: Phase 1 complete, connected to live data
+## Status: Phase 1 complete; Phase 2 has a first measured checkpoint
 
 | Phase | State |
 |---|---|
 | 0 — Domain verification | ✅ [`docs/DOMAIN_NOTES.md`](docs/DOMAIN_NOTES.md), [`config/market_rules.yaml`](config/market_rules.yaml) |
-| 1 — Data layer | ✅ built, tested, and **connected to live data** (ENTSO-E + TenneT) |
-| 2 — Forecasting | ⬜ next |
+| 1 — Data layer | ✅ built, tested, and **connected to live data** (ENTSO-E), gap-free 2024-10-18 to 2026-04-30 |
+| 2 — Forecasting | 🟡 baselines + LEAR wired to real walk-forward folds; GBM, DM tests, calibration still open |
 | 3 — Dispatch optimisation | ⬜ |
 | 4 — Backtest | ⬜ |
 | 5 — Demo | ⬜ |
 | 6 — Write-up | ⬜ |
 
-**Headline result:** `TODO: not yet measured.` No data has been fetched, no model
-trained, no backtest run. This file will carry no number that was not produced by
+**Headline result (provisional checkpoint, not a validated finding):** on 18
+walk-forward folds (2024-11 through 2026-04, holdout untouched), an
+L1-regularised quantile-regression model (LEAR) scores **23.2 mean pinball
+loss (EUR/MWh)** predicting the imbalance short price, against 25.5 for the
+climatological baseline (CLAUDE.md's own "one to beat") and 42.5 for
+persistence. Produced by [`scripts/run_walkforward_evaluation.py`](scripts/run_walkforward_evaluation.py);
+full numbers and method in [`docs/DECISIONS.md`](docs/DECISIONS.md) ADR-027.
+**Not yet done:** significance testing (Diebold-Mariano) against the
+baselines, calibration/coverage, segmented reporting, or a check across the
+2025-10-01 day-ahead MTU change — so "LEAR wins" is not yet a claim this
+project is prepared to stand behind, only a number this project is prepared
+to show its work for. This file will carry no number that was not produced by
 code in this repo.
 
 ## What exists today
 
-**117 tests, `ruff` and `mypy --strict` clean, verified from a clean clone.**
+**264 tests, `ruff` and `mypy --strict` clean, verified from a clean clone.**
 
 - **The no-look-ahead gate** ([`src/data/data_availability.py`](src/data/data_availability.py),
   [`tests/test_no_lookahead.py`](tests/test_no_lookahead.py)). `available_at(field, isp)`
