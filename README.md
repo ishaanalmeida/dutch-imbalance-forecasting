@@ -1,114 +1,161 @@
 # Dutch Imbalance Market Forecasting & Battery Dispatch Lab
 
-Probabilistic forecasting of the Dutch (TenneT) imbalance price and regulation
-state at 15-minute resolution, and battery dispatch optimised against the full
-predictive distribution — backtested under real settlement rules, real
-publication latency, and an explicit market-impact model.
+Probabilistic forecasting of the Dutch (TenneT) imbalance settlement price at
+15-minute resolution, with battery-storage dispatch optimised against the full
+predictive distribution. Walk-forward backtested under real settlement rules,
+real publication latency, and an explicit market-impact model.
 
-## Status: Phase 2 forecasting + Phase 3 dispatch complete; backtest engine built
+## Headline result
+
+A quantile-GBM forecast, dispatching a 10 MW / 40 MWh battery via
+rolling-horizon optimisation, **captures 15.9% of the perfect-foresight revenue
+on 18 walk-forward folds (2024-11 to 2026-04)** and **27.9% on the final
+holdout (May–Jul 2026, evaluated once)**. Annualised walk-forward net revenue:
+EUR 621K deterministic, EUR 582K CVaR. All numbers carry block-bootstrap 95%
+confidence intervals and are produced by committed code in this repo. The
+forecast beats the strongest naive baseline (climatological quantiles
+conditioned on hour-of-day) with Diebold-Mariano p << 0.001.
+
+**Read [LIMITATIONS.md](LIMITATIONS.md) before interpreting any number.**
+
+## Key figures
+
+| | Walk-Forward (18 mo) | Final Holdout (3 mo) |
+|---|---|---|
+| Perfect foresight | EUR 5,840K | EUR 754K |
+| Deterministic | EUR 930K (15.9% PF) | EUR 211K (27.9% PF) |
+| CVaR (ra=0.5) | EUR 870K (14.9% PF) | EUR 185K (24.6% PF) |
+| 95% CI (det.) | [682K, 1,201K] | [94K, 351K] |
+| GBM pinball loss | 23.17 EUR/MWh | 22.51 EUR/MWh |
+| GBM calibration error | 0.008 | 0.059 |
+
+The holdout outperforms walk-forward on the PF ratio — likely period-specific
+(May–Jul 2026 market characteristics) rather than model improvement. Reported
+honestly; see ADR-032.
+
+### Efficient frontier
+
+Revenue ranges from EUR 86K (ra=0.2) to EUR 67K (ra=0.9) on the last 3 months
+of walk-forward data. The frontier is relatively flat: expected revenue and tail
+risk move together in this market, reflecting the skewness of imbalance prices.
+CVaR5 improves from -280 to -273 EUR/ISP across the sweep.
+
+### Revenue saturation
+
+Under a sqrt(capacity / 500 MW) market-impact model, revenue per MW degrades
+from EUR 88K/MW at 1 MW to EUR 39K/MW at 100 MW. At 500 MW deployed, the
+public-data signal is fully absorbed. This is a modelling choice, not a
+measurement — see [LIMITATIONS.md](LIMITATIONS.md).
+
+## Method
+
+**Data.** ENTSO-E Transparency Platform (imbalance prices, day-ahead prices)
+and Open-Meteo (forecast archive, not reanalysis). 15-minute ISPs from
+2024-10-18 (PICASSO go-live) to 2026-08-01. Publication lags enforced in code
+via `data_availability.py` — every feature must pass an availability check
+before use.
+
+**Features.** Lagged settlement price (freshest available, and 1-week lag),
+day-ahead price, cyclically-encoded hour and day-of-week. Each feature has a
+documented source and publication lag in [`docs/FEATURES.md`](docs/FEATURES.md).
+
+**Models.** Five baselines (persistence, seasonal naive 1d/1w, climatological
+quantiles, day-ahead price), LEAR (regularised linear quantile regression),
+and quantile-GBM (LightGBM with quantile loss, one model per quantile).
+Quantile crossing handled by post-hoc sorting. All models share a common
+interface: `fit(X, y)`, `predict_quantiles(X, quantiles)`.
+
+**Evaluation protocol.** Expanding-origin walk-forward with monthly folds, no
+random splits. Pinball loss, CRPS, calibration (reliability curves, PIT
+histogram), MAE/RMSE, Diebold-Mariano significance tests with
+Holm-Bonferroni correction over 5 comparisons. Results segmented by hour,
+season, year, and dual-pricing state. 7 model configurations tried across the
+project — reported for multiple-testing context.
+
+**Dispatch.** Rolling-horizon LP (cvxpy, CLARABEL solver). Three policies:
+deterministic (median forecast), CVaR (stratified quantile scenarios,
+risk-aversion sweep), perfect foresight (upper bound). Battery: 10 MW /
+40 MWh, 95% round-trip efficiency, EUR 5/MWh degradation cost, terminal
+SoC penalty.
+
+**Settlement.** Actual Dutch rules from `config/market_rules.yaml`, including
+dual pricing in regulation state 2.
+
+## Limitations (prominently placed, not at the bottom)
+
+1. **Market impact is modelled, not measured.** The sqrt impact model is a
+   structural assumption. The saturation curve is directionally correct but the
+   shape is uncalibrated.
+2. **Holdout improvement may be period-specific.** The 27.9% PF ratio on
+   holdout vs 15.9% on walk-forward likely reflects market conditions in
+   May–Jul 2026, not model improvement.
+3. **Data revision vintages cannot be fully reconstructed.** ENTSO-E serves the
+   current vintage. The backtest uses what was available at pull time, not the
+   historically-published value.
+4. **7 model configurations explored.** The search space is small but
+   non-zero — reported performance should be read with this context.
+5. **Backtest assumes settlement at the imbalance price.** Real operation
+   involves bidding and activation uncertainty.
+
+Full list: [LIMITATIONS.md](LIMITATIONS.md).
+
+## Reproduction
+
+```bash
+uv sync                              # install dependencies
+make test                            # 292 tests
+make check                           # lint + typecheck + test
+make backtest                        # reproduce backtest numbers
+make serve                           # Streamlit dashboard at localhost:8501
+make serve-api                       # FastAPI at localhost:8000
+```
+
+Requires [`uv`](https://docs.astral.sh/uv/) (it fetches the pinned Python).
+Copy `.env.example` to `.env` and add an ENTSO-E API token for data fetching.
+
+## Demo
+
+Four-screen Streamlit dashboard:
+
+1. **Live Forecast** — current ISP prediction with fan chart (once the
+   scheduled job is running and accumulating a track record).
+2. **Track Record** — pinball loss table, calibration curves, PIT histogram,
+   DM significance tests, results segmented by hour and season.
+3. **Backtest Explorer** — efficient frontier, revenue-per-MW saturation curve,
+   per-year breakdown with bootstrap CIs, final holdout comparison.
+4. **What-If Simulator** — adjust battery parameters and risk aversion, see
+   scaled revenue estimate with uncertainty bands.
+
+## Repo structure
+
+```
+├── config/market_rules.yaml     # settlement logic (single source of truth)
+├── src/
+│   ├── data/                    # fetchers, cache, data_availability.py
+│   ├── features/                # builder, targets
+│   ├── models/                  # baselines, lear, gbm (common interface)
+│   ├── evaluation/              # metrics, walk-forward harness
+│   ├── optimisation/            # battery dispatch (deterministic, CVaR, PF)
+│   ├── backtest/                # event-driven engine, bootstrap CIs
+│   ├── api/                     # FastAPI backend
+│   └── jobs/                    # scheduled forecast + weather vintage logging
+├── frontend/app.py              # Streamlit dashboard
+├── scripts/                     # walk-forward eval, backtest, holdout eval
+├── tests/                       # 292 tests
+└── docs/                        # DOMAIN_NOTES, FEATURES, DECISIONS, REPORT
+```
+
+## Status
 
 | Phase | State |
 |---|---|
-| 0 -- Domain verification | done: [`docs/DOMAIN_NOTES.md`](docs/DOMAIN_NOTES.md), [`config/market_rules.yaml`](config/market_rules.yaml) |
-| 1 -- Data layer | done: tested, **connected to live data** (ENTSO-E), gap-free 2024-10-18 to 2026-04-30 |
-| 2 -- Forecasting | done: baselines + LEAR + GBM, DM significance tests, calibration pending final report |
-| 3 -- Dispatch optimisation | done: deterministic, CVaR, and perfect-foresight policies |
-| 4 -- Backtest | in progress: engine built with look-ahead enforcement, bootstrap CIs |
-| 5 -- Demo | not started |
-| 6 -- Write-up | not started |
-
-**Headline result (significance-tested):** on 18 walk-forward folds (2024-11
-through 2026-04, holdout untouched), LEAR scores **23.20 mean pinball loss
-(EUR/MWh)** and quantile-GBM scores **23.17**, against 25.47 for the
-climatological baseline and 42.50 for persistence. Both models beat
-climatology with extreme significance (Diebold-Mariano DM = -16.55 / -15.31,
-p << 0.001, Holm-Bonferroni corrected over 5 comparisons; 52,416 test
-observations). The 0.03 difference between LEAR and GBM is economically
-negligible. Produced by [`scripts/run_walkforward_evaluation.py`](scripts/run_walkforward_evaluation.py);
-full numbers in [`docs/DECISIONS.md`](docs/DECISIONS.md) ADR-027/028/029.
-This file carries no number that was not produced by code in this repo.
-
-## What exists today
-
-**292 tests (275 default + 17 cvxpy-isolated), `ruff` and `mypy --strict` clean.**
-
-- **The no-look-ahead gate** ([`src/data/data_availability.py`](src/data/data_availability.py),
-  [`tests/test_no_lookahead.py`](tests/test_no_lookahead.py)). `available_at(field, isp)`
-  answers when a datum first became retrievable, and **refuses rather than guessing**
-  when a lag is unresolved. Mutation-tested: 13 deliberate breakages, including
-  `<`→`<=` and measuring lag from period start instead of period end.
-- **Settlement rules encoded and tested.** The regulation-state → price table
-  from TenneT's *Imbalance Pricing System* **v6.1 (21 Oct 2024)**, including dual
-  pricing in state 2 and the reverse-pricing mid-price correction, lives in
-  [`config/market_rules.yaml`](config/market_rules.yaml) as executable config.
-  [`src/market.py`](src/market.py) resolves it rather than restating it.
-- **DST-correct time base** — the 23-hour and 25-hour Amsterdam days are asserted
-  explicitly (92 and 100 ISPs), because a naive 96-per-day assumption fails
-  silently twice a year.
-- **Fetchers** for ENTSO-E and Open-Meteo, writing through a raw-response store
-  and a month-partitioned Parquet cache. The weather fetcher enforces an
-  **allowlist** on the endpoint so ERA5 reanalysis can never be used as a feature.
-- **Publication lags catalogued** per series, each confidence-tagged, with the
-  one unresolved lag left `null` rather than guessed — see Limitations.
-
-- **An append-only vintage log** ([`src/data/vintage.py`](src/data/vintage.py)) and a
-  scheduled job that records what the forecast said, when it said it. Nothing is
-  ever overwritten, so `latest_as_of()` reconstructs exactly what was visible
-  strictly before any instant — and the difference between two vintages is the
-  forecast-error proxy. **This is the only artefact that cannot be back-filled**,
-  which is why it runs before a model exists.
-- **CI** enforcing lint, `mypy --strict`, tests, and three repository-level
-  invariants: nothing under `data/` may become committable (R7), `.env` is never
-  tracked (R8), and every source file on disk is tracked by git.
-
-**Not yet built:** feature builder, models, backtest, optimisation, demo (Phases 2–5).
-
-## Try it
-
-```bash
-uv run python -m src.cli status         # what is built, what is blocked, why
-uv run python -m src.cli availability   # the no-look-ahead gate, for the current ISP
-uv run python -m src.cli settle         # the settlement table on a worked example
-uv run python -m src.cli log-vintage    # record the current forecast
-uv run python -m src.cli track-record   # what has accumulated so far
-uv run python -m src.cli reparse        # rebuild the cache from raw, no refetch
-```
-
-`availability` is the one worth looking at: it prints, per field, when the datum
-became retrievable and whether it is usable at the decision instant — including
-why `balance_delta` is *refused* rather than guessed.
-
-## Limitations
-
-Read [`LIMITATIONS.md`](LIMITATIONS.md) before anything else. The three that
-currently matter most:
-
-1. **The regulation state changed meaning on 2026-02-03** — determined from the
-   12-second balance delta instead of the 1-minute series (75 samples per ISP,
-   not 15). Same rule wording, but monotonicity is less likely over more
-   samples, so state 2 (the only dual-priced state) should get more frequent
-   with no change in the physical system. Only ~6 months of post-change data.
-2. **The balance-delta lag is measured (134 s) but over a narrow window** —
-   2.18 hours of one weekday afternoon. Not overnight, weekends, or scarcity,
-   which is when a battery earns most. TenneT describe the delay as
-   *configurable*, so re-measure across 24 h before trusting a revenue figure.
-3. PICASSO (18 Oct 2024) left price formation unchanged — confirmed by v6.1 —
-   but shifted the price *distribution*, plausibly halving volatility.
-
-## Reproduce
-
-```bash
-uv sync
-uv run pytest        # or: make test
-uv run ruff check .
-uv run mypy
-```
-
-Requires [`uv`](https://docs.astral.sh/uv/); it fetches the pinned Python itself.
-Every `make` target is a one-line wrapper over the equivalent `uv run` command,
-so `make` is optional.
-
-Copy `.env.example` to `.env` and add an ENTSO-E API token before Phase 1.
+| 0 — Domain | done |
+| 1 — Data | done |
+| 2 — Forecasting | done |
+| 3 — Dispatch | done |
+| 4 — Backtest | done |
+| 5 — Demo | done |
+| 6 — Write-up | done |
 
 ---
 
