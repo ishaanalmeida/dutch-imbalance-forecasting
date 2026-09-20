@@ -1247,38 +1247,46 @@ to import ordering within the cvxpy test directory.
 
 ---
 
-## ADR-031 — Phase 4 backtest: deterministic captures 15.9% of PF, CVaR underperforms
+## ADR-031 — Phase 4 backtest: deterministic 15.9% PF, CVaR 14.9% PF
 
 **Date**: 2026-09-20
-**Status**: accepted (finding)
+**Status**: accepted (finding), updated with CVaR fix
 
 Walk-forward backtest over 18 monthly folds (2024-11 to 2026-04), 52,416 ISPs,
 10 MW / 40 MWh battery at EUR 5/MWh degradation.
 
-**Results:**
+**Results (after stratified scenario fix):**
 - Perfect foresight: EUR 5,840,081 (upper bound)
 - Deterministic (rolling horizon, median forecast): EUR 929,535 (15.9% of PF)
-- CVaR (risk_aversion=0.5, Schaake shuffle, 20 scenarios): EUR -394,423 (loss)
-- Bootstrap 95% CI for deterministic: [681K, 1.20M]
+- CVaR (risk_aversion=0.5, stratified quantile, 20 scenarios): EUR 870,398 (14.9% of PF)
+- Bootstrap 95% CIs: deterministic [681K, 1.20M], CVaR [607K, 1.16M]
 
-The 15.9% PF capture ratio is the headline number. Typical for public-data
-imbalance strategies in the literature (10–20%).
+The 15.9% and 14.9% PF capture ratios are consistent with public-data
+imbalance strategies in the literature (10–20%). CIs overlap — deterministic
+and CVaR are statistically indistinguishable on this sample.
 
-**CVaR failure diagnosis:** the efficient frontier sweep shows even ra=0.0
-(pure expected value, no risk aversion) earns near-zero. Root cause: naive
-Schaake shuffle scenario generation averages out the forecast signal. Each
-scenario samples quantiles independently per ISP, then reorders by historical
-rank templates. The cross-scenario mean at each ISP is the expected value of
-the forecast distribution, not the median — and the signal-to-noise ratio
-across 20 scenarios is too low for the LP optimizer to find profitable
-charge/discharge patterns. The median forecast preserves the point signal
-that the deterministic optimizer exploits.
+**CVaR failure and fix (c97bbf1):** the original Schaake shuffle sampled
+independent quantile levels per ISP, destroying the forecast's directional
+signal. Even at ra=0.0 (pure expected value), the old frontier earned
+near-zero (~EUR 6K over 3 months). Root cause: the cross-scenario mean at
+each ISP collapsed toward the forecast distribution mean, washing out the
+median signal the deterministic optimizer exploits. Fix: stratified quantile
+sampling — each of 20 scenarios picks a consistent base quantile level
+(evenly spaced 0.025 to 0.975), with small per-ISP jitter (std=0.03), so
+each scenario preserves the forecast's temporal shape while varying the
+overall price level. CVaR went from EUR -394K to EUR +870K.
 
-**Improvement path (not implemented):** condition scenario deviations on the
-median rather than sampling the full marginal. Or: use a parametric copula
-(e.g., Gaussian copula on PIT-transformed quantile residuals) to generate
-scenarios that preserve both the marginal distribution and the conditional
-mean signal. This is a Phase 6 / stretch task.
+**Efficient frontier (last 3 months of walk-forward):**
+- ra=0.2: EUR 86K, CVaR5 = -280
+- ra=0.5: EUR 84K, CVaR5 = -274
+- ra=0.9: EUR 67K, CVaR5 = -273
+The frontier is relatively flat — expected revenue and tail risk move together
+in this market, which makes sense given the skewness of imbalance prices.
+
+**Per-year breakdown:**
+- 2024 (2 months): det EUR 74K, CVaR EUR 54K (CVaR slightly trails)
+- 2025 (full year): det EUR 981K, CVaR EUR 983K (effectively identical)
+- 2026 (4 months): det EUR 143K, CVaR EUR 110K
 
 **Market impact model:** sqrt(capacity_mw / 500). Revenue-per-MW degrades from
 EUR 87,596/MW at 1 MW to EUR 39,383/MW at 100 MW. At 500 MW, the model says
