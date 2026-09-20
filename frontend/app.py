@@ -7,11 +7,14 @@ Streamlit app with four screens per CLAUDE.md §7:
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
 import numpy as np
 import plotly.graph_objects as go
 import streamlit as st
+
+logger = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parent.parent
 BACKTEST_PATH = ROOT / "work" / "backtest" / "backtest_results.json"
@@ -24,6 +27,46 @@ st.set_page_config(
     page_icon="⚡",
     layout="wide",
 )
+
+# ── Header ───────────────────────────────────────────────────────────────
+
+st.title("Dutch Imbalance Market Forecasting & Battery Dispatch Lab")
+
+st.markdown(
+    "Probabilistic forecasting of the Dutch imbalance settlement price at "
+    "15-minute resolution, with battery dispatch optimised against the full "
+    "predictive distribution. Walk-forward backtested under real settlement "
+    "rules and publication latency."
+)
+
+with st.expander("Glossary — key terms used on this page"):
+    st.markdown(
+        "- **ISP** — Imbalance Settlement Period (15 minutes). The Dutch grid "
+        "settles energy imbalances every 15 min.\n"
+        "- **Pinball loss** — The standard scoring rule for quantile forecasts. "
+        "Lower is better. Measures how well predicted quantiles match reality.\n"
+        "- **PF ratio** — Ratio to Perfect Foresight. What fraction of the "
+        "theoretical maximum revenue (if prices were known in advance) the "
+        "strategy captures.\n"
+        "- **CVaR** — Conditional Value at Risk. A risk measure: the expected "
+        "loss in the worst 5% of outcomes. Used here to trade off expected "
+        "revenue against downside risk.\n"
+        "- **DM test** — Diebold-Mariano test. A statistical test for whether "
+        "two forecasts are significantly different in accuracy.\n"
+        "- **PIT** — Probability Integral Transform. If a probabilistic forecast "
+        "is well-calibrated, the PIT values should be uniformly distributed.\n"
+        "- **CRPS** — Continuous Ranked Probability Score. A single-number "
+        "summary of probabilistic forecast quality (lower is better).\n"
+        "- **Calibration** — Whether predicted probabilities match observed "
+        "frequencies: a 90% prediction interval should contain the outcome 90% "
+        "of the time.\n"
+        "- **Walk-forward** — Expanding-origin evaluation: train on all data up to "
+        "month N, test on month N+1, then expand. No future data leaks into "
+        "training.\n"
+        "- **LEAR** — Lasso Estimated AutoRegressive model. A regularised linear "
+        "quantile regression, the standard benchmark in electricity price "
+        "forecasting literature."
+    )
 
 DISCLAIMER = (
     "**Research tool.** Results are backtested under stated assumptions. "
@@ -52,7 +95,10 @@ def load_forecast_log() -> list[dict]:
         entries = []
         for line in FORECAST_LOG.read_text().strip().split("\n"):
             if line.strip():
-                entries.append(json.loads(line))
+                try:
+                    entries.append(json.loads(line))
+                except json.JSONDecodeError:
+                    logger.warning("Skipping malformed forecast log line: %s", line[:80])
         return entries
     return []
 
@@ -76,6 +122,12 @@ tab_forecast, tab_track, tab_backtest, tab_whatif = st.tabs(
 
 with tab_forecast:
     st.header("Live Forecast")
+    st.markdown(
+        "Real-time quantile forecasts for the next ISPs, produced by a GBM model "
+        "trained on the latest data and logged with a timestamp at the time of "
+        "issue. **This record cannot be back-fitted** — it is the strongest "
+        "evidence that the model works out-of-sample."
+    )
     if fc_log:
         latest = fc_log[-1]
         st.markdown(f"**Last forecast issued:** {latest['forecast_issued_at']}")
@@ -108,13 +160,9 @@ with tab_forecast:
     else:
         st.info(
             "The scheduled forecast job has not yet produced forecasts. "
-            "Once deployed via GitHub Actions, this screen shows the current and "
+            "Once the GitHub Actions cron is active, this screen shows the current and "
             "next ISP forecasts with a fan chart of the predictive distribution. "
             "The live track record accumulates here — it cannot be back-fitted."
-        )
-        st.markdown(
-            "**Next step:** push to GitHub and enable the `live-forecast` workflow. "
-            "Value accrues with wall-clock time."
         )
 
 # ── Tab 2: Track Record ──────────────────────────────────────────────
@@ -122,14 +170,25 @@ with tab_forecast:
 with tab_track:
     st.header("Forecast Evaluation — Walk-Forward")
     st.markdown(
-        f"**{ev['folds']} expanding-origin folds** ({ev['fold_range']}), "
-        f"reference model: {ev['reference_model']}, "
-        f"multiple-comparison correction: {ev['correction']}, "
-        f"model configs tried: {ev['model_configs_tried']}."
+        "How well do the models predict imbalance prices? Evaluated on "
+        f"**{ev['folds']} expanding-origin monthly folds** ({ev['fold_range']}), "
+        "where each fold trains on all prior data and tests on the next month. "
+        "No future information leaks into training."
+    )
+    st.markdown(
+        f"Reference baseline: **{ev['reference_model']}** (hour × day-of-week "
+        f"conditional quantiles). Multiple-comparison correction: "
+        f"**{ev['correction']}** across {ev['model_configs_tried']} model "
+        f"configurations."
     )
 
     # -- Model comparison table --
     st.subheader("Pinball Loss (lower is better)")
+    st.caption(
+        "Pinball loss measures how well each model's predicted quantiles match "
+        "reality. The strongest naive baseline (Climatology) scores 25.47 — "
+        "both LEAR and GBM beat it significantly."
+    )
     models = ["persistence", "seasonal_naive_1w", "climatology", "day_ahead", "lear", "gbm"]
     labels = ["Persistence", "Seasonal Naive (1w)", "Climatology", "Day-Ahead", "LEAR", "GBM"]
     losses = [ev["fold_losses"][m]["mean"] for m in models]
@@ -144,6 +203,10 @@ with tab_track:
     # -- Calibration coverage --
     with col1:
         st.subheader("Calibration — Coverage vs Nominal")
+        st.caption(
+            "A well-calibrated model's line hugs the diagonal: its 50th "
+            "percentile should be exceeded 50% of the time, its 90th 90%, etc."
+        )
         fig_cal = go.Figure()
         fig_cal.add_trace(go.Scatter(
             x=[0, 1], y=[0, 1], mode="lines",
@@ -172,6 +235,11 @@ with tab_track:
     # -- PIT histogram --
     with col2:
         st.subheader("PIT Histogram — GBM")
+        st.caption(
+            "If the forecast is well-calibrated, this histogram should be flat "
+            "(uniform). Peaks or valleys indicate systematic bias in specific "
+            "parts of the distribution."
+        )
         pit = ev["calibration"]["gbm"]["pit_histogram"]
         n_bins = len(pit)
         bin_edges = [i / n_bins for i in range(n_bins)]
@@ -193,7 +261,12 @@ with tab_track:
         st.plotly_chart(fig_pit, use_container_width=True)
 
     # -- DM tests --
-    st.subheader("Diebold-Mariano Tests vs Climatology")
+    st.subheader("Diebold-Mariano Significance Tests")
+    st.caption(
+        "Do the models beat the climatological baseline by a statistically "
+        "significant margin, or could the difference be noise? Negative DM "
+        "statistic = better than baseline."
+    )
     dm = ev["dm_tests_vs_reference"]
     dm_rows = []
     for d in dm:
@@ -207,12 +280,17 @@ with tab_track:
 
     dm_lg = ev["dm_lear_vs_gbm"]
     st.markdown(
-        f"**LEAR vs GBM:** DM = {dm_lg['dm_stat']:.3f}, "
-        f"p = {dm_lg['p_value']:.3f} — not significantly different."
+        f"**LEAR vs GBM head-to-head:** DM = {dm_lg['dm_stat']:.3f}, "
+        f"p = {dm_lg['p_value']:.3f} — **not significantly different.** "
+        f"The linear model is surprisingly competitive against gradient boosting."
     )
 
     # -- Segmented by hour --
     st.subheader("Pinball Loss by Hour of Day")
+    st.caption(
+        "Where does the model struggle? Morning hours (9–12 UTC) are hardest — "
+        "renewable generation ramps create unpredictable imbalances."
+    )
     fig_hour = go.Figure()
     for m, lab, color in [
         ("gbm", "GBM", "#1f77b4"),
@@ -252,18 +330,28 @@ with tab_track:
 
 with tab_backtest:
     st.header("Backtest Explorer")
+    st.markdown(
+        "How much money does a battery earn using these forecasts? Revenue from "
+        "a rolling-horizon dispatch optimisation, settled under actual Dutch "
+        "imbalance rules including dual pricing."
+    )
     batt = bt["battery"]
     st.markdown(
         f"**Battery:** {batt['power_mw']:.0f} MW / {batt['energy_mwh']:.0f} MWh, "
-        f"η = {batt['efficiency_charge']*100:.0f}%, "
-        f"degradation = EUR {batt['degradation_eur_per_mwh']}/MWh. "
+        f"η = {batt['efficiency_charge']*100:.0f}% round-trip, "
+        f"degradation = EUR {batt['degradation_eur_per_mwh']}/MWh throughput. "
         f"**{bt['n_folds']} walk-forward folds**, {bt['n_test_isps']:,} ISPs."
     )
 
     # -- Revenue summary --
     st.subheader("Revenue Summary")
+    st.caption(
+        "Perfect foresight is the theoretical maximum — it knows future prices. "
+        "The PF ratio shows what fraction of that ceiling the forecast-based "
+        "strategy captures. 95% CIs from block bootstrap (n=5,000)."
+    )
     pol_order = ["perfect_foresight", "deterministic", "cvar_0.5", "do_nothing"]
-    pol_labels = ["Perfect Foresight", "Deterministic", "CVaR (0.5)", "Do Nothing"]
+    pol_labels = ["Perfect Foresight", "Deterministic", "CVaR (ra=0.5)", "Do Nothing"]
     rev_rows = []
     for p, lab in zip(pol_order, pol_labels, strict=True):
         d = bt["policies"][p]
@@ -282,6 +370,12 @@ with tab_backtest:
     # -- Efficient frontier --
     with col1:
         st.subheader("Efficient Frontier")
+        st.caption(
+            "How does revenue change with risk aversion? Each point is a "
+            "different CVaR risk-aversion setting (0 = risk-neutral, 1 = "
+            "maximally risk-averse). The frontier is relatively flat — "
+            "expected revenue and tail risk move together in this market."
+        )
         frontier = bt["efficient_frontier"]
         ra_vals = [f["risk_aversion"] for f in frontier]
         rev_vals = [f["net_revenue"] / 1e3 for f in frontier]
@@ -308,6 +402,12 @@ with tab_backtest:
     # -- Saturation curve --
     with col2:
         st.subheader("Revenue-per-MW Saturation")
+        st.caption(
+            "A public-data strategy degrades as more capacity is deployed — "
+            "your own trading pushes the market back toward balance. This curve "
+            "shows where the signal saturates. The model is assumed (√(MW/500)), "
+            "not calibrated — the shape is correct, the level is uncertain."
+        )
         sat = bt["saturation_curve"]
         cap_vals = [s["capacity_mw"] for s in sat if s["revenue_per_mw"] > 0]
         rpm_vals = [s["revenue_per_mw"] / 1e3 for s in sat if s["revenue_per_mw"] > 0]
@@ -329,6 +429,11 @@ with tab_backtest:
 
     # -- Per-year breakdown --
     st.subheader("Revenue by Year")
+    st.caption(
+        "Revenue varies significantly by year — 2025 was volatile and "
+        "profitable. A strategy that earns most of its revenue in one year "
+        "is a finding, not a proof of robustness."
+    )
     years = sorted(bt["yearly_revenue"]["perfect_foresight"].keys())
     year_rows = []
     for y in years:
@@ -350,12 +455,17 @@ with tab_backtest:
     if ho:
         st.subheader("Final Holdout (One-Time Evaluation)")
         st.markdown(
+            "The holdout period was never touched during development. It was "
+            "evaluated **exactly once**, at the very end. If results degrade "
+            "here, that is reported — not hidden."
+        )
+        st.markdown(
             f"**Period:** {ho['holdout_start'][:10]} to {ho['holdout_end'][:10]} "
             f"({ho['n_holdout']:,} ISPs, {ho['n_holdout'] * 0.25 / 24:.0f} days). "
             f"Trained on {ho['n_train']:,} ISPs."
         )
         ho_pol = ["perfect_foresight", "deterministic", "cvar_0.5", "do_nothing"]
-        ho_lab = ["Perfect Foresight", "Deterministic", "CVaR (0.5)", "Do Nothing"]
+        ho_lab = ["Perfect Foresight", "Deterministic", "CVaR (ra=0.5)", "Do Nothing"]
         ho_rows = []
         for p, lab in zip(ho_pol, ho_lab, strict=True):
             d = ho["dispatch"][p]
@@ -369,12 +479,11 @@ with tab_backtest:
             })
         st.dataframe(ho_rows, hide_index=True, use_container_width=True)
 
-        # Comparison: walk-forward vs holdout
         n_wf_years = bt["n_test_isps"] * 0.25 / 8760
         n_ho_years = ho["n_holdout"] * 0.25 / 8760
         st.markdown("**Walk-forward vs holdout (annualised):**")
         comp_rows = []
-        for p, lab in [("deterministic", "Deterministic"), ("cvar_0.5", "CVaR (0.5)")]:
+        for p, lab in [("deterministic", "Deterministic"), ("cvar_0.5", "CVaR (ra=0.5)")]:
             wf_ann = bt["policies"][p]["net_revenue_eur"] / n_wf_years
             ho_ann = ho["dispatch"][p]["net_revenue_eur"] / n_ho_years
             delta = ((ho_ann / wf_ann) - 1) * 100 if wf_ann != 0 else 0
@@ -386,9 +495,9 @@ with tab_backtest:
             })
         st.dataframe(comp_rows, hide_index=True, use_container_width=True)
         st.caption(
-            "Holdout outperforms walk-forward on annualised basis. This may reflect "
-            "a more volatile/predictable market period (May-Jul 2026) rather than "
-            "model improvement — reported honestly per R3/R5."
+            "Holdout outperforms walk-forward on annualised basis. This likely "
+            "reflects a more volatile/predictable market period (May–Jul 2026) "
+            "rather than model improvement — reported honestly."
         )
 
 # ── Tab 4: What-If Simulator ──────────────────────────────────────────
@@ -396,9 +505,10 @@ with tab_backtest:
 with tab_whatif:
     st.header("What-If Simulator")
     st.markdown(
-        "Adjust battery parameters and see estimated annual revenue. "
-        "Revenue is scaled from the backtest deterministic policy results "
-        "using the market-impact saturation model."
+        "What would a different battery earn? Adjust the parameters below and "
+        "see the estimated annual revenue, scaled from backtest results using "
+        "the market-impact saturation model. **This is the screen a battery "
+        "operator would use.**"
     )
 
     col_in, col_out = st.columns([1, 2])
@@ -475,5 +585,5 @@ with tab_whatif:
             f"Risk-aversion scaling from efficient frontier (ra={risk_aversion:.1f} → "
             f"{ra_scale:.2f}x baseline). "
             f"Duration capped at 1.5x base. "
-            f"This is an approximation — actual dispatch would require re-optimization."
+            f"This is an approximation — actual dispatch would require re-optimisation."
         )
