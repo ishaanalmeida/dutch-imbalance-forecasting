@@ -7,7 +7,7 @@
 
 UV := uv
 
-.PHONY: install test lint typecheck check fetch features train backtest report repro serve log-vintage hooks status availability
+.PHONY: install test lint typecheck check fetch features train backtest report repro serve serve-api log-vintage hooks status availability
 
 install:
 	$(UV) sync
@@ -55,7 +55,7 @@ train:
 	@echo "TODO: Phase 2 not built yet" && exit 1
 
 backtest:
-	@echo "TODO: Phase 4 not built yet" && exit 1
+	$(UV) run python scripts/run_backtest.py
 
 report:
 	@echo "TODO: Phase 6 not built yet" && exit 1
@@ -63,4 +63,7 @@ report:
 repro: fetch features train backtest report
 
 serve:
-	@echo "TODO: Phase 5 not built yet" && exit 1
+	$(UV) run streamlit run frontend/app.py --server.headless true
+
+serve-api:
+	$(UV) run uvicorn src.api.main:app --host 0.0.0.0 --port 8000
