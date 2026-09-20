@@ -1295,3 +1295,53 @@ is applied post-hoc to the deterministic dispatch (the battery doesn't
 re-optimize given the impact). The saturation curve is directionally correct
 but overstates losses at high capacity because it doesn't model the
 operator's exit decision.
+
+---
+
+## ADR-032 — Final holdout: deterministic 27.9% PF, improved over walk-forward
+
+**Date**: 2026-09-20
+**Status**: accepted (finding, one-time per R2)
+
+Holdout period: 2026-05-01 to 2026-08-01 (6,528 ISPs, 68 days).
+Trained on all pre-holdout data (53,760 ISPs).
+
+**Forecast evaluation on holdout:**
+- GBM pinball loss: 22.51 (WF: 23.17, improved)
+- LEAR pinball loss: 23.85 (WF: 23.20, slightly degraded)
+- GBM calibration error: 0.0587 (tighter than WF)
+- Both significantly beat climatology (p ≈ 0)
+
+**Dispatch on holdout:**
+- Perfect foresight: EUR 754,119
+- Deterministic: EUR 210,673 (27.9% PF), 95% CI [94K, 351K]
+- CVaR (0.5): EUR 185,236 (24.6% PF), 95% CI [70K, 324K]
+- Annualised: det EUR 1.13M vs WF EUR 621K (+82%)
+
+**Interpretation:** the holdout outperforms walk-forward on all dispatch
+metrics. This is likely period-specific — May-July 2026 may have been more
+volatile or more predictable — rather than evidence of model improvement.
+The walk-forward training set grows by only ~10% between the last WF fold
+and the holdout training cut. The improvement, honestly reported, is a
+positive finding but should not be extrapolated.
+
+---
+
+## ADR-033 — Phase 5 architecture: Streamlit + FastAPI
+
+**Date**: 2026-09-20
+**Status**: accepted
+
+Frontend: Streamlit (single Python file, no build step, no npm).
+Backend: FastAPI (5 endpoints for programmatic access).
+Both read precomputed JSON from work/.
+
+Justification: ponytail lean zone — "do not build a component library, do
+not add a state-management dependency for four screens." Streamlit gives us
+interactive Plotly charts, tabs, sliders, and responsive layout in one file.
+FastAPI adds programmatic access without coupling to the frontend.
+
+Deployment target: Streamlit Community Cloud (free tier, stable).
+
+Live forecast job: GitHub Actions cron every 15 min during peak hours.
+Logs to forecast_log/forecasts.jsonl — unfalsifiable, timestamped records.
