@@ -1,0 +1,199 @@
+{
+  "battery": {
+    "power_mw": 10.0,
+    "energy_mwh": 40.0,
+    "efficiency_charge": 0.95,
+    "efficiency_discharge": 0.95,
+    "degradation_eur_per_mwh": 5.0
+  },
+  "n_folds": 18,
+  "n_test_isps": 52416,
+  "policies": {
+    "perfect_foresight": {
+      "net_revenue_eur": 5840080.69425179,
+      "total_revenue_eur": 6330848.547914915,
+      "degradation_eur": 490767.85366312537,
+      "ratio_to_pf": 1.0
+    },
+    "deterministic": {
+      "net_revenue_eur": 929535.0619299518,
+      "total_revenue_eur": 1197864.1659857766,
+      "degradation_eur": 268329.1040558248,
+      "ratio_to_pf": 0.15916476339870855
+    },
+    "cvar_0.5": {
+      "net_revenue_eur": 870398.061248712,
+      "total_revenue_eur": 1147370.7095514545,
+      "degradation_eur": 276972.6483027425,
+      "ratio_to_pf": 0.14903870456882862
+    },
+    "do_nothing": {
+      "net_revenue_eur": 0.0,
+      "total_revenue_eur": 0.0,
+      "degradation_eur": 0.0,
+      "ratio_to_pf": 0.0
+    }
+  },
+  "yearly_revenue": {
+    "perfect_foresight": {
+      "2024": 982882.2895203986,
+      "2025": 4219247.991407171,
+      "2026": 1128718.2669873612
+    },
+    "deterministic": {
+      "2024": 73531.41629407459,
+      "2025": 981309.6900775878,
+      "2026": 143023.05961411432
+    },
+    "cvar_0.5": {
+      "2024": 54304.305868660864,
+      "2025": 982859.6873232806,
+      "2026": 110206.71635951308
+    },
+    "do_nothing": {
+      "2024": 0.0,
+      "2025": 0.0,
+      "2026": 0.0
+    }
+  },
+  "bootstrap_ci_95": {
+    "perfect_foresight": {
+      "lo": 5395056.078670829,
+      "mean": 5842038.4963152865,
+      "hi": 6299100.405180061
+    },
+    "deterministic": {
+      "lo": 681688.7077710455,
+      "mean": 930082.1628725162,
+      "hi": 1200657.2970541427
+    },
+    "cvar_0.5": {
+      "lo": 606613.2197831938,
+      "mean": 870111.2945209633,
+      "hi": 1156340.1656857224
+    }
+  },
+  "efficient_frontier": [
+    {
+      "risk_aversion": 0.0,
+      "net_revenue": 76283.56753047052,
+      "cvar_5pct": -279.999998456556,
+      "std_daily_revenue": 3188.9371474454733
+    },
+    {
+      "risk_aversion": 0.1,
+      "net_revenue": 80684.98549305249,
+      "cvar_5pct": -278.06249847456513,
+      "std_daily_revenue": 3123.8646357311627
+    },
+    {
+      "risk_aversion": 0.2,
+      "net_revenue": 85681.86553510446,
+      "cvar_5pct": -279.50874997549204,
+      "std_daily_revenue": 3047.4044647221176
+    },
+    {
+      "risk_aversion": 0.3,
+      "net_revenue": 81905.72785075448,
+      "cvar_5pct": -274.99999998871147,
+      "std_daily_revenue": 3052.92453594921
+    },
+    {
+      "risk_aversion": 0.4,
+      "net_revenue": 86338.44435090885,
+      "cvar_5pct": -276.70249980430253,
+      "std_daily_revenue": 3063.6489280991386
+    },
+    {
+      "risk_aversion": 0.5,
+      "net_revenue": 83815.44402994862,
+      "cvar_5pct": -274.25749972107513,
+      "std_daily_revenue": 3051.499864995501
+    },
+    {
+      "risk_aversion": 0.6,
+      "net_revenue": 81550.92081821722,
+      "cvar_5pct": -274.9999996657298,
+      "std_daily_revenue": 3051.4112971956747
+    },
+    {
+      "risk_aversion": 0.7,
+      "net_revenue": 77164.31114845103,
+      "cvar_5pct": -276.78749994603845,
+      "std_daily_revenue": 3038.661184656013
+    },
+    {
+      "risk_aversion": 0.8,
+      "net_revenue": 71563.88519256163,
+      "cvar_5pct": -272.49999995962247,
+      "std_daily_revenue": 3064.457493680503
+    },
+    {
+      "risk_aversion": 0.9,
+      "net_revenue": 67061.68946430515,
+      "cvar_5pct": -272.4999999417335,
+      "std_daily_revenue": 3207.1493114610666
+    },
+    {
+      "risk_aversion": 1.0,
+      "net_revenue": 76208.57652592607,
+      "cvar_5pct": -272.49999979769007,
+      "std_daily_revenue": 3032.316080943189
+    }
+  ],
+  "saturation_curve": [
+    {
+      "capacity_mw": 1.0,
+      "total_net_revenue": 87596.49478708462,
+      "revenue_per_mw": 87596.49478708462
+    },
+    {
+      "capacity_mw": 2.0,
+      "total_net_revenue": 170755.09601793817,
+      "revenue_per_mw": 85377.54800896908
+    },
+    {
+      "capacity_mw": 5.0,
+      "total_net_revenue": 404874.3226656871,
+      "revenue_per_mw": 80974.86453313743
+    },
+    {
+      "capacity_mw": 10.0,
+      "total_net_revenue": 760131.4869881698,
+      "revenue_per_mw": 76013.14869881698
+    },
+    {
+      "capacity_mw": 20.0,
+      "total_net_revenue": 1379924.4574655935,
+      "revenue_per_mw": 68996.22287327968
+    },
+    {
+      "capacity_mw": 50.0,
+      "total_net_revenue": 2753685.763643235,
+      "revenue_per_mw": 55073.7152728647
+    },
+    {
+      "capacity_mw": 100.0,
+      "total_net_revenue": 3938339.213388943,
+      "revenue_per_mw": 39383.39213388943
+    },
+    {
+      "capacity_mw": 200.0,
+      "total_net_revenue": 3438784.870546842,
+      "revenue_per_mw": 17193.92435273421
+    },
+    {
+      "capacity_mw": 500.0,
+      "total_net_revenue": -13416455.20279124,
+      "revenue_per_mw": -26832.91040558248
+    }
+  ],
+  "market_impact_model": "sqrt(capacity / 500)",
+  "dispatch_config": {
+    "window_isps": 32,
+    "step_isps": 16,
+    "cvar_n_scenarios": 20,
+    "cvar_alpha": 0.05,
+    "scenario_method": "stratified_quantile"
+  }
+}

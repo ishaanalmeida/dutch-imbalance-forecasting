@@ -8,6 +8,7 @@ year in ways that do not raise. Everything here is UTC-first for that reason.
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
+from typing import cast
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -23,6 +24,19 @@ def _require_aware(ts: datetime) -> datetime:
     if ts.tzinfo is None or ts.tzinfo.utcoffset(ts) is None:
         raise ValueError(f"timestamp must be timezone-aware, got naive {ts!r}")
     return ts
+
+
+def require_aware_index(df: pd.DataFrame, label: str = "index") -> pd.DataFrame:
+    """Shared tz-aware guard for a DataFrame's DatetimeIndex.
+
+    The single home for a check src/features/builder.py and
+    src/features/targets.py each reimplemented independently -- a guard
+    duplicated across modules can drift when one copy is tightened and the
+    other is forgotten (docs/DECISIONS.md ADR-025).
+    """
+    if cast(pd.DatetimeIndex, df.index).tz is None:
+        raise ValueError(f"{label} require a tz-aware UTC index; got a naive one")
+    return df
 
 
 def isp_start_of(ts: datetime) -> datetime:

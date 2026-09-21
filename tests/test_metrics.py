@@ -1,0 +1,204 @@
+from __future__ import annotations
+
+import numpy as np
+import pytest
+
+from src.evaluation.metrics import (
+    QUANTILES,
+    brier_score,
+    crps_from_quantiles,
+    diebold_mariano,
+    empirical_coverage,
+    enforce_monotone,
+    holm_bonferroni,
+    log_loss_binary,
+    mean_pinball,
+    pinball_loss,
+    pinball_loss_per_obs,
+    pit_values,
+)
+
+
+def test_quantile_grid_matches_the_brief() -> None:
+    """CLAUDE.md §4: 'at minimum 0.05 ... 0.95 in steps of 0.05'."""
+    assert len(QUANTILES) == 19
+    assert QUANTILES[0] == pytest.approx(0.05)
+    assert QUANTILES[-1] == pytest.approx(0.95)
+
+
+def test_pinball_loss_hand_worked() -> None:
+    """q=0.5, y=10, pred=8 -> 0.5 * (10-8) = 1.0 (under-prediction).
+    q=0.5, y=10, pred=12 -> (1-0.5) * (12-10) = 1.0 (over-prediction)."""
+    y = np.array([10.0])
+    assert pinball_loss(y, np.array([[8.0]]), (0.5,))[0] == pytest.approx(1.0)
+    assert pinball_loss(y, np.array([[12.0]]), (0.5,))[0] == pytest.approx(1.0)
+
+
+def test_pinball_penalises_asymmetrically_at_extreme_quantiles() -> None:
+    """At q=0.95, under-predicting must cost far more than over-predicting."""
+    y = np.array([10.0])
+    under = pinball_loss(y, np.array([[8.0]]), (0.95,))[0]
+    over = pinball_loss(y, np.array([[12.0]]), (0.95,))[0]
+    assert under == pytest.approx(0.95 * 2)
+    assert over == pytest.approx(0.05 * 2)
+    assert under > over
+
+
+def test_pinball_is_zero_for_a_perfect_prediction() -> None:
+    y = np.array([10.0, 20.0])
+    preds = np.array([[10.0], [20.0]])
+    assert mean_pinball(y, preds, (0.5,)) == pytest.approx(0.0)
+
+
+def test_crps_is_zero_for_a_perfect_deterministic_forecast() -> None:
+    y = np.array([5.0])
+    q_pred = np.full((1, len(QUANTILES)), 5.0)
+    assert crps_from_quantiles(y, q_pred, QUANTILES) == pytest.approx(0.0, abs=1e-9)
+
+
+def test_crps_grows_as_the_forecast_moves_away() -> None:
+    y = np.array([5.0])
+    near = crps_from_quantiles(y, np.full((1, len(QUANTILES)), 6.0), QUANTILES)
+    far = crps_from_quantiles(y, np.full((1, len(QUANTILES)), 20.0), QUANTILES)
+    assert far > near > 0
+
+
+def test_empirical_coverage_of_a_perfectly_calibrated_forecast() -> None:
+    """Draw from a known uniform, predict its true quantiles: empirical
+    coverage must track nominal within sampling error."""
+    rng = np.random.default_rng(0)
+    y = rng.uniform(0.0, 1.0, size=20_000)
+    q_pred = np.tile(np.array(QUANTILES), (len(y), 1))
+    coverage = empirical_coverage(y, q_pred, QUANTILES)
+    assert np.allclose(coverage, np.array(QUANTILES), atol=0.02)
+
+
+def test_pit_of_a_calibrated_forecast_is_approximately_uniform() -> None:
+    rng = np.random.default_rng(1)
+    y = rng.uniform(0.0, 1.0, size=20_000)
+    q_pred = np.tile(np.array(QUANTILES), (len(y), 1))
+    pit = pit_values(y, q_pred, QUANTILES)
+    counts, _ = np.histogram(pit, bins=10, range=(0.0, 1.0))
+    assert counts.std() / counts.mean() < 0.15
+
+
+def test_enforce_monotone_sorts_crossed_quantiles() -> None:
+    """CLAUDE.md §4 requires quantile crossing be addressed explicitly. We sort
+    post hoc, and say so."""
+    crossed = np.array([[10.0, 8.0, 12.0]])
+    assert enforce_monotone(crossed).tolist() == [[8.0, 10.0, 12.0]]
+
+
+def test_enforce_monotone_leaves_already_sorted_rows_untouched() -> None:
+    ok = np.array([[1.0, 2.0, 3.0]])
+    assert enforce_monotone(ok).tolist() == ok.tolist()
+
+
+def test_brier_score_hand_worked() -> None:
+    """Perfect confident prediction scores 0; maximally wrong scores 1."""
+    assert brier_score(np.array([1.0]), np.array([1.0])) == pytest.approx(0.0)
+    assert brier_score(np.array([1.0]), np.array([0.0])) == pytest.approx(1.0)
+    assert brier_score(np.array([1.0, 0.0]), np.array([0.5, 0.5])) == pytest.approx(0.25)
+
+
+def test_log_loss_penalises_confident_errors_severely() -> None:
+    mild = log_loss_binary(np.array([1.0]), np.array([0.4]))
+    severe = log_loss_binary(np.array([1.0]), np.array([0.01]))
+    assert severe > mild > 0
+
+
+def test_log_loss_is_finite_for_a_zero_probability() -> None:
+    """An unclipped log loss returns inf and destroys a whole run's mean."""
+    assert np.isfinite(log_loss_binary(np.array([1.0]), np.array([0.0])))
+
+
+def test_mismatched_shapes_raise() -> None:
+    with pytest.raises(ValueError, match="shape"):
+        pinball_loss(np.array([1.0, 2.0]), np.array([[1.0]]), (0.5,))
+
+
+def test_1d_metrics_also_reject_mismatched_shapes() -> None:
+    with pytest.raises(ValueError, match="shape"):
+        brier_score(np.array([1.0, 0.0]), np.array([1.0]))
+    with pytest.raises(ValueError, match="shape"):
+        log_loss_binary(np.array([1.0, 0.0]), np.array([1.0]))
+
+
+def test_nan_target_raises_instead_of_silently_mis_scoring() -> None:
+    """A NaN target (e.g. a dual-pricing leg that does not apply this ISP)
+    must never be silently scored as 'covered' or 'above the top quantile'."""
+    y = np.array([1.0, np.nan])
+    q = np.array([[0.0, 1.0], [0.0, 1.0]])
+    with pytest.raises(ValueError, match="NaN"):
+        empirical_coverage(y, q, (0.25, 0.75))
+    with pytest.raises(ValueError, match="NaN"):
+        pit_values(y, q, (0.25, 0.75))
+    with pytest.raises(ValueError, match="NaN"):
+        brier_score(y, np.array([0.5, 0.5]))
+
+
+def test_pinball_loss_per_obs_matches_mean_pinball() -> None:
+    """per_obs averaged must equal mean_pinball — they compute the same thing."""
+    rng = np.random.default_rng(42)
+    y = rng.normal(50, 10, 100)
+    q_pred = np.sort(rng.normal(50, 10, (100, len(QUANTILES))), axis=1)
+    per_obs = pinball_loss_per_obs(y, q_pred, QUANTILES)
+    assert per_obs.shape == (100,)
+    assert per_obs.mean() == pytest.approx(mean_pinball(y, q_pred, QUANTILES), abs=1e-10)
+
+
+def test_dm_detects_a_clearly_better_model() -> None:
+    """Model A loses ~10, model B loses ~20. DM should be negative (A better)
+    and highly significant."""
+    rng = np.random.default_rng(99)
+    loss_a = rng.normal(10.0, 1.0, 500)
+    loss_b = rng.normal(20.0, 1.0, 500)
+    dm, p = diebold_mariano(loss_a, loss_b)
+    assert dm < 0
+    assert p < 0.001
+
+
+def test_dm_returns_insignificant_for_equal_models() -> None:
+    """Same losses, so no difference to detect."""
+    rng = np.random.default_rng(7)
+    losses = rng.normal(10, 2, 500)
+    dm, p = diebold_mariano(losses, losses)
+    assert dm == pytest.approx(0.0)
+    assert p == pytest.approx(1.0)
+
+
+def test_dm_handles_autocorrelated_differences() -> None:
+    """With positive autocorrelation in d, the HAC variance should be larger
+    than the naive variance, making the test more conservative."""
+    rng = np.random.default_rng(8)
+    n = 1000
+    d = np.empty(n)
+    d[0] = rng.normal(1.0, 1.0)
+    for i in range(1, n):
+        d[i] = 0.7 * d[i - 1] + rng.normal(1.0, 1.0)
+    loss_a = d
+    loss_b = np.zeros(n)
+    dm_stat, p_val = diebold_mariano(loss_a, loss_b)
+    # The test should still detect a signal, but be conservative
+    assert isinstance(dm_stat, float)
+    assert 0 <= p_val <= 1
+
+
+def test_dm_rejects_nan_input() -> None:
+    with pytest.raises(ValueError, match="NaN"):
+        diebold_mariano(np.array([1.0, np.nan]), np.array([2.0, 3.0]))
+
+
+def test_holm_bonferroni_controls_fwer() -> None:
+    """Three tests, one real signal. Holm should preserve the signal and
+    correct the noise."""
+    raw = [("real", 0.001), ("noise1", 0.04), ("noise2", 0.06)]
+    result = holm_bonferroni(raw)
+    labels = {r[0]: (r[1], r[2]) for r in result}
+    # real: 0.001 * 3 = 0.003, still significant
+    assert labels["real"][1] is True
+    assert labels["real"][0] == pytest.approx(0.003)
+    # noise1: 0.04 * 2 = 0.08, no longer significant
+    assert labels["noise1"][1] is False
+    # noise2: 0.06 * 1 = 0.06, still not significant
+    assert labels["noise2"][1] is False

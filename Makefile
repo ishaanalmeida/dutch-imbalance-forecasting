@@ -7,7 +7,7 @@
 
 UV := uv
 
-.PHONY: install test lint typecheck check fetch features train backtest report repro serve log-vintage hooks status availability
+.PHONY: install test lint typecheck check fetch features train backtest report repro serve serve-api log-vintage hooks status availability
 
 install:
 	$(UV) sync
@@ -46,21 +46,28 @@ log-vintage:
 # have no CLI driver yet, and ENTSO-E needs a token. Fails loudly rather than
 # appearing to succeed.
 fetch:
-	@echo "No fetch driver yet: fetchers are importable modules; ENTSOE_API_TOKEN also required" && exit 1
+	$(UV) run python scripts/backfill_history.py
 
 features:
-	@echo "TODO: Phase 2 not built yet (feature builder)" && exit 1
+	$(UV) run python -c "from src.features.builder import build_features; print('Feature builder OK')"
 
 train:
-	@echo "TODO: Phase 2 not built yet" && exit 1
+	$(UV) run python scripts/run_walkforward_evaluation.py
 
 backtest:
-	@echo "TODO: Phase 4 not built yet" && exit 1
+	$(UV) run python scripts/run_backtest.py
+
+holdout:
+	OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 $(UV) run python scripts/run_holdout_evaluation.py
 
 report:
-	@echo "TODO: Phase 6 not built yet" && exit 1
+	@echo "Reports are pre-built Markdown: README.md, docs/REPORT.md, LIMITATIONS.md"
 
-repro: fetch features train backtest report
+repro: fetch train backtest holdout
+	@echo "All pipeline stages completed. Compare work/ outputs to docs/REPORT.md."
 
 serve:
-	@echo "TODO: Phase 5 not built yet" && exit 1
+	$(UV) run streamlit run frontend/app.py --server.headless true
+
+serve-api:
+	$(UV) run uvicorn src.api.main:app --host 0.0.0.0 --port 8000

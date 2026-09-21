@@ -706,3 +706,642 @@ recorded in LIMITATIONS.md.
 further back than the window you are arguing about. I had 9 months cached and
 formed a conclusion; 5 years of one-week-per-quarter samples reversed it for
 about twenty API calls.
+
+---
+
+## ADR-023 — Task 5 feature builder: `day_ahead_price` made unconditional; `lag_price_short_1` removed as impossible, availability now enforced per row
+
+**`day_ahead_price` catalogue/column mismatch.** The Task 5 brief's
+`build_features` only wrote a `day_ahead_price` column when a `day_ahead`
+series was passed, but `CATALOGUE` never listed it — so the mandatory
+"built columns match the catalogue exactly" test would fail the moment a
+caller omitted `day_ahead`, and `DayAheadBaseline` (`src/models/baselines.py`),
+which unconditionally reads `X["day_ahead_price"]`, would `KeyError` whenever
+it was.
+
+**Decision.** Added a `day_ahead_price` entry to `CATALOGUE` and made the
+column unconditional: `build_features` always emits it, NaN-filled when no
+`day_ahead` series is supplied. Chosen over the alternative (keep it
+conditional, carve it out of the columns-match test) because it requires no
+test weakening, keeps the emitted column set a pure function of the
+catalogue with no caller-dependent branching, and gives `DayAheadBaseline` a
+column that always exists rather than one that exists only if the caller
+remembered to pass day-ahead data.
+
+**Separately — a real, unresolved R1 tension, not this task's bug to fix.**
+The Task 5 brief's own "Interfaces" line and its module docstring claim the
+builder "asks `data_availability` for permission per field per period, so a
+leaking feature is impossible by construction", and lists `assert_available`,
+`available_vintages` and a `decision_offset` parameter as consumed. The
+brief's actual `build_features` code implements none of this — no
+`assert_available` call exists anywhere in the module, and `decision_offset`
+was dropped from the signature. This is not an oversight I could silently
+patch: wiring `assert_available` in at the canonical ISP-start decision time
+(`ADR-005`, restated in `tests/test_no_lookahead.py`) against the catalogue's
+current `source_field` choice would raise `LookAheadError` on nearly every
+row of `lag_price_short_1`, and on every row before ~10:00 local for
+`lag_price_short_96`. Reason: `imbalance_price_settled` publishes once daily
+at D+1 10:00 (`config/market_rules.yaml`, which annotates it *"the TARGET
+variable, never a feature"*), so a 1-ISP or 1-day shift of it does not
+correspond to genuinely-available information at ISP-start decision time —
+unlike, say, `imbalance_price_realtime_estimate` (lag_after_period, ~120 s),
+which the config explicitly marks *"Usable as a feature."*
+
+This mirrors ADR-021's own conclusion: it already named "point-level
+availability... for the Phase 2 feature builder" as a **next step**, not
+something already done. Task 6's self-review table nonetheless lists
+"Availability enforcement in the builder" as delivered by Task 5 — that line
+is aspirational against the brief's own sample code, not yet true against
+what ships here.
+
+**Initial resolution (superseded below).** First pass implemented Task 5 as
+specified — catalogue metadata only, no per-row enforcement — and left the
+tension above open for explicit review rather than silently resolving it in
+either direction, per CLAUDE.md §11 ("ask before... making a domain
+assumption that materially changes results").
+
+### Follow-up — resolved: `lag_price_short_1` removed, enforcement wired in with NaN masking
+
+The project owner reviewed the finding above, verified it directly against
+`data_availability`, and confirmed: **`lag_price_short_1` can never be
+available.** Settled prices publish D+1 10:00, so at ISP-start decision time
+no settled value from the target period's own delivery day exists yet, at
+any lag shorter than "yesterday, and only after ~10:00 local." Their
+measurement:
+
+```
+decision = ISP start        t-1     t-96(1d)   t-192(2d)   t-672(7d)
+2026-06-17 06:00 UTC         no        no         YES         YES
+2026-06-17 12:00 UTC         no       YES         YES         YES
+yesterday-same-ISP available for 55/96 ISPs of a day (57%)
+```
+
+**Catalogue changes.**
+- `lag_price_short_1` and `lag_spread_1` **removed**, not deprecated — an
+  impossible feature left in place invites someone to "fix" the enforcement
+  around it instead of removing it.
+- `lag_price_short_192` **added** (settled price two days back, same ISP):
+  always available regardless of decision-time hour-of-day, since D+1 10:00
+  settlement of a two-day-old period is always in the past by the time any
+  ISP of the current day starts.
+- `lag_price_short_freshest` **added**: `lag_price_short_96` where available,
+  else `lag_price_short_192` (which always is). This is the actual "last
+  observed value" a real decision has access to, and is now what
+  `PersistenceBaseline` reads (`src/models/baselines.py`) — its docstring now
+  states plainly that "last observed" means 1-2 days old, a property of this
+  market's settlement mechanics, not a baseline weakness.
+- `lag_price_short_96` and `lag_price_short_672` kept (already legitimately
+  laggy enough to often clear the settlement rule). `lag_spread_1` replaced
+  by `lag_spread_96`, masked the same way.
+
+**Enforcement.** `build_features` now calls
+`src.data.data_availability.is_available(field, target_isp_of_the_lagged_value,
+decision_time=ISP_start)` per row for every settled-price-derived lag, via a
+new `_availability_mask`/`_masked_lag` pair in `src/features/builder.py`, and
+sets the value to NaN where unavailable — it does **not** raise, since
+non-availability is a legitimate per-row state (~43-45% of rows for the
+1-day lags in the measurements below), not an error. A catalogue entry naming
+a field `data_availability` refuses outright (`UnresolvedLagError`, e.g. an
+unmeasured lag) is left to propagate rather than caught, since that is a
+genuine catalogue bug, not a per-row state.
+
+**Availability rates measured**, 30 days of synthetic ISPs (2,880 rows,
+`day_ahead` supplied so that column gets a fair test too):
+
+| Column | Available | Rate | Note |
+|---|---|---|---|
+| `lag_price_short_96` | 1,595 / 2,880 | 55.4% (57.3% of eligible rows once the 96-row lead-in is excluded) | Matches the owner's measured 57% exactly |
+| `lag_spread_96` | 1,595 / 2,880 | 55.4% | Same mask as above (same field, same lag) |
+| `lag_price_short_192` | 2,688 / 2,880 | 93.3% | Shortfall is purely the 192-row lead-in (`2880-192=2688`); always available once there is enough history |
+| `lag_price_short_672` | 2,208 / 2,880 | 76.7% | Shortfall is purely the 672-row (7-day) lead-in (`2880-672=2208`); always available once there is enough history |
+| `lag_price_short_freshest` | 2,743 / 2,880 | 95.2% | NaN only inside the 192-row lead-in, and even there recovers via `lag_price_short_96` wherever that clears the settlement rule |
+| calendar (`hour_sin`/`hour_cos`/`dow_sin`/`dow_cos`/`hour`/`dayofweek`) | 2,880 / 2,880 | 100% | Pure functions of the timestamp; never masked |
+| `day_ahead_price` | 2,880 / 2,880 | 100% | Published D-1 13:00 for the whole of day D, so always available by any ISP of day D; here because a `day_ahead` series was supplied |
+
+`lag_price_short_192`/`_672`/`freshest` never fall below 100% for a *reason
+other than* insufficient lead-in history in a finite synthetic window — on
+real cached data (26,208+ ISPs) the lead-in cost is one-time and negligible.
+
+**Do not change `src/data/data_availability.py`.** Confirmed: it is correct
+and mutation-tested; the feature design (source field choice, not the
+enforcement layer) was what was wrong, and this fix changes only the
+catalogue and the builder that consumes it.
+
+Test coverage: `tests/test_feature_builder.py::test_no_catalogued_feature_is_ever_unavailable_for_every_row`
+(with a deviation from the literal test as proposed — `day_ahead` is supplied
+so `day_ahead_price` gets a fair chance to be non-NaN, since an all-NaN
+column from an *omitted optional input* is a different, non-bug condition
+from an *impossible* feature, which is what this test is meant to catch),
+`::test_same_day_settled_price_is_never_used`,
+`::test_yesterdays_price_is_masked_before_the_settlement_run`.
+
+## ADR-024 — encode the observed MAX lag, not the p95; and the lag is not constant
+
+**Two corrections to ADR-019/ADR-020, both from a 60-hour measurement.**
+
+### 1. The lag varies by time of day
+
+ADR-020 called the lag "a deterministic configured constant" on the strength of
+630 samples spanning 2.18 hours of one afternoon (range: 1.0 second). A 974-sample,
+60.1-hour run says otherwise:
+
+| Hours (UTC) | median | max |
+|---|---|---|
+| 12:00–14:00 | 133.5 s | 134.0 s |
+| 15:00–17:00, 21:00–00:00 | 121.5 s | 122.0 s |
+| 23:00 | 121.7 s | **145.8 s** |
+
+The two clusters differ by **12.0 s — exactly one publication cadence tick**.
+That points at poll-phase aliasing (our documented 0–12 s upward bias) rather
+than two TSO settings, and the 23:00 outlier at 145.8 s is two ticks. Either
+way it is measurement noise in the conservative direction, so it is treated as
+noise and not as a signal about TenneT's configuration.
+
+**The method lesson repeats ADR-022's:** a tight distribution inside a short
+window is not evidence of stability outside it. Two hours said "constant";
+sixty hours said otherwise.
+
+### 2. p95 was the wrong statistic, and that was my instruction
+
+ADR-019 and the Phase 1 plan both said to encode the **p95**, reasoning that a
+median "would grant look-ahead on half the observations". Correct about the
+median, one step short of the right conclusion.
+
+**R1 is asymmetric.** Understating the lag claims data was retrievable earlier
+than it was — look-ahead, on exactly the fraction of rows in the upper tail.
+Overstating it only withholds signal. Measured against the 974-sample set:
+
+| Encoded | Rows with a longer true lag | |
+|---|---|---|
+| median (133.2 s) | 486 / 974 | **49.9% leak** |
+| p95 (133.9 s) | 48 / 974 | **4.9% leak** |
+| p99 (134.0 s) | 9 / 974 | 0.9% leak |
+| **max (145.8 s)** | **0 / 974** | **0%** |
+
+The previously-encoded 134 s would have leaked on about **1 row in 20** — not
+catastrophic, but exactly the kind of quiet, flattering error this project
+exists to avoid, and invisible in any result.
+
+**Decision: encode the observed maximum, rounded up. `lag_seconds: 146`.**
+Re-encode upward if a longer tail ever appears; never downward without a
+larger sample than the one that produced the current value.
+
+The test no longer hard-codes a number. It asserts
+`lag_seconds >= lag_measurement.max_seconds`, so the encoded value is pinned to
+its own evidence and cannot silently drift below it.
+
+### Still unobserved
+
+Hours 01:00–11:00 and 18:00–20:00 UTC, weekends, and scarcity periods. The
+coverage caveat in `config/market_rules.yaml` stands.
+
+## ADR-025 — 8-angle review of the Phase 2a baselines/features/eval commits: fixes and one rejected finding
+
+An 8-angle code review (line-by-line, removed-behaviour, cross-file, reuse,
+simplification, efficiency, altitude, CLAUDE.md-conventions) plus independent
+verification of every finding against the actual code before acting. Fixed:
+
+**1. `SeasonalNaiveBaseline` returned 100% NaN on any genuinely out-of-sample
+index (`src/models/baselines.py`).** `fit()` stored only the training fold's
+y; `predict_quantiles` shifted and NaN-filled *that* series, then reindexed
+onto whatever index the caller passed — bfill/fillna ran before the reindex,
+so they only ever patched gaps already inside the training window. A disjoint
+test-fold index (the entire point of walk-forward) never overlapped the
+shift, so every test-fold prediction was NaN. Confirmed by execution, not
+just reading. Fixed by reading the feature builder's own availability-masked
+`lag_price_short_{period_isps}` column instead of re-shifting the target —
+the same pattern `PersistenceBaseline` already used, and the reason that
+column exists. `fit()` now just validates the column is present. This was a
+mandatory R4 baseline that could not previously be scored in any real fold.
+
+**2. `config/market_rules.yaml`'s `lag_coverage_caveat` contradicted its own
+neighbouring fields.** It still asserted the 630-sample/2.18h measurement
+"spans only 1.0 second... consistent with a deterministic configured
+constant", directly contradicted by `time_of_day_variation` two paragraphs
+above (ADR-024: NOT constant, ~24s range across two clusters) and by
+`lag_history`'s own superseded note. Reworded to state plainly that the old
+measurement looked deterministic and the newer one disproved it.
+
+**3. The feature builder's "impossible by construction" guarantee was
+test-dependent, not actually enforced (`src/features/builder.py`).**
+`data_availability.assert_available`'s own docstring says the feature builder
+is expected to call it on every field it touches; the builder instead only
+ever called `is_available` and masked to NaN uniformly, so a field/lag
+combination unavailable for literally every row (like the removed
+`lag_price_short_1`, ADR-023) was indistinguishable from a normally
+~43%-masked column except by a human noticing, backed only by
+`test_no_catalogued_feature_is_ever_unavailable_for_every_row`. Fixed:
+`_masked_lag` now raises if its mask is False for every row of a window
+spanning at least a day — long enough that an all-unavailable result can only
+mean the lag is structurally impossible, never bad luck. Per-row partial
+masking (the legitimate, common case) is unaffected.
+
+**4. `generate_folds` had no `train_end >= train_start` invariant
+(`src/evaluation/walkforward.py`).** `train_start` is pinned to
+`PICASSO_START`; `train_end` is `test_start - purge`. Only the *input*
+`first_test_month >= PICASSO_START` was checked, before month-start snapping —
+a non-default `purge` larger than the gap from `PICASSO_START` to the first
+snapped test month could invert the window. Not yet reachable (no
+model-training loop exists yet, and the default purge is 1 day), but this is
+a declared rigour zone; added the assertion, raising with the purge and both
+boundary timestamps in the message.
+
+**5. Duplicated guards, consolidated to one copy each.** The DataFrame
+tz-aware check (`src/features/builder.py` and `src/features/targets.py`,
+byte-identical bodies, only the error noun differed) is now
+`src.data.timebase.require_aware_index`. The labelled-datetime tz-aware check
+(three identical copies: `src/data/data_availability.py`,
+`src/data/vintage.py`, `src/evaluation/walkforward.py`) is now
+`src.data.data_availability.require_aware`, imported by the other two.
+`timebase.py`'s own pre-existing unlabelled `_require_aware` (used only by
+`isp_start_of`) was left alone — different signature, different call site,
+out of scope. `_require_gapfree_grid` now delegates to
+`src.data.quality.gap_report` instead of re-deriving the same delta-vs-step
+arithmetic, so a future correction there (e.g. for duplicate timestamps) is
+inherited automatically.
+
+**6. `lag_price_short_96` and `lag_spread_96` computed the identical
+availability mask twice** (same `(field, lag_isps)` pair, ~105k rows each,
+twice). Computed once, reused for both.
+
+**7. `pit_values`/`empirical_coverage`/`pinball_loss` had no NaN guard.** A
+NaN target was silently scored as "not covered" or "PIT = 1.0" instead of
+raising — a real risk once dual-pricing targets (feed/take, CLAUDE.md §4)
+produce structural NaNs. `brier_score`/`log_loss_binary` also each hand-rolled
+an identical shape check instead of sharing one. Added `_check_no_nan`
+(shared by the existing `_check`) and `_check_1d` (shared by the two
+probability metrics); this rigour-zone module now refuses NaN inputs outright
+rather than guessing, consistent with `data_availability`'s own philosophy.
+
+**8. `docs/FEATURES.md` claims to be generated and "do not edit by hand" but
+nothing enforced that.** Added a test asserting the checked-in file equals
+`render_catalogue_markdown()`'s current output.
+
+Also fixed the minor `span > 0` double-evaluation in `pit_values` and the
+double read of `idx.hour`/`idx.dayofweek` in `build_features` (same values,
+computed once, reused for both the cyclic and raw columns).
+
+**Left unvectorized, deliberately: `_availability_mask`'s per-row Python
+loop.** ~420k pure-Python `is_available` calls per `build_features` run over
+full history — the dominant cost in the module once many model configurations
+are run. Not fixed: `build_features` currently runs once per full history
+rather than in an inner loop, so this is a scaling ceiling, not a live
+bottleneck, and the fix (bucket by local calendar date) is real but not
+free to get right across DST boundaries. Revisit if profiling ever shows it
+matters, not before.
+
+### Rejected finding: calendar features built from UTC, not Amsterdam local time
+
+`hour`, `dayofweek`, and the cyclic encodings derived from them. One review
+angle flagged this as a plausible defect: Dutch demand/price
+cycles follow local clock time, and a timestamp in the 22:00–24:00 UTC band
+sits in the wrong local hour/day bucket relative to Amsterdam, worse across
+DST transition weeks. Investigated and **not changed**, because
+`src/data/timebase.py` already draws this exact line, twice, deliberately:
+its module docstring states "UTC internally, Europe/Amsterdam only at
+presentation" verbatim matching CLAUDE.md §3, and its `to_local()` function's
+docstring says outright: "Presentation only. Never use the result as a join
+key." Converting calendar *features* to local time would cross a boundary
+this codebase's own author drew on purpose, not one this review discovered.
+The DST-smearing effect is real but bounded (±1 hour, twice a year); logging
+it here rather than silently dropping the finding, per CLAUDE.md §11 ("log
+the disagreement and the resolution"). If this genuinely costs calibration,
+the fix is `src.data.timebase.to_local(idx).hour`/`.dayofweek` in
+`build_features` — cheap to apply later if segmented evaluation (CLAUDE.md
+§4) shows a DST-adjacent miscalibration, but not assumed now.
+
+## ADR-026 — first Phase 2 model: LEAR-style quantile regression (`src/models/lear.py`)
+
+CLAUDE.md §4 mandates this as model #1, before any nonlinear model: "Any
+nonlinear model must beat this to justify itself." Added `scikit-learn==1.9.1`
+(the user chose it explicitly over statsmodels when asked, since this is a
+heavy-dependency addition CLAUDE.md §11 calls out as a stop-and-ask item, not
+one to add silently) — `QuantileRegressor` solves the L1-regularised pinball
+LP directly via `solver="highs"`; hand-rolling that LP would be reinventing a
+well-tested wheel for no benefit. Design choices made without stopping to ask
+(implementation-level, not domain-materialising) and logged here per CLAUDE.md
+§11's "log the disagreement/decision and the resolution":
+
+**Feature set excludes `lag_spread_96` and the raw `hour`/`dayofweek`
+columns.** `lag_spread_96` carries the same ~43% D+1-10:00 mask as
+`lag_price_short_96` (config/market_rules.yaml); including it honestly needs
+a missingness indicator alongside imputation, not silent fill, which is a
+follow-up ablation once this v1 has a measured result, not a v1 requirement.
+`hour`/`dayofweek` are catalogued specifically as grouping keys for the
+climatology baselines (`src/features/catalogue.py`'s own rationale text); a
+linear model gets the same calendar information, correctly (cyclically)
+encoded, from `hour_sin/cos`/`dow_sin/cos` already in the feature set.
+
+**NaN policy: drop incomplete rows at fit time, raise at predict time.**
+Dropping incomplete training rows (e.g. the first week of all-time history,
+before `lag_price_short_672` has 7 days of lookback) is ordinary practice and
+costs nothing at 3+ years of data. Raising at predict time instead of
+imputing follows this project's standing "refuse rather than guess" ethos
+(`data_availability`'s own words) — a caller must filter or otherwise resolve
+incomplete rows before calling `predict_quantiles`, since a battery cannot be
+dispatched off a fabricated feature value. `day_ahead_price` being entirely
+NaN raises unconditionally at fit time: that only happens if a caller omits
+day-ahead data altogether, never in real operation once ENTSO-E day-ahead
+history is wired in, so silently working around it would mask a caller bug.
+
+**Quantile models are fit lazily, per requested tau, and cached.** The shared
+model interface's `fit(X, y)` takes no `quantiles` argument (CLAUDE.md §9:
+swapping models must not change evaluation code), but `QuantileRegressor`
+needs a separate LP solve per quantile. `fit()` stores the scaled training
+data; `predict_quantiles` fits and caches whichever taus it hasn't seen yet.
+This only ever touches the stored training fold, never test data, so it does
+not reopen any look-ahead question.
+
+**Not yet built:** wiring this into `generate_folds`/`build_features` to
+produce an actual walk-forward result, and quantile-crossing is handled via
+`enforce_monotone` (post-hoc sort, same as `ClimatologyBaseline`) rather than
+a monotone-by-construction formulation — both are the natural next steps, not
+oversights.
+
+## ADR-027 — data backfilled, walk-forward wired, first real Phase 2 result measured
+
+**Backfill.** Cached `imbalance_prices` was continuous only from 2025-12-01;
+before that, Oct 2024–Nov 2025 was one-week-per-quarter spot samples with
+large gaps, and `day_ahead_price` was almost entirely empty (720 hourly rows
+for June 2025, 1 row for July 2025). Neither was documented anywhere as a
+known gap before this session found it by actually reading the cache. Added
+`scripts/backfill_history.py` (month-chunked, idempotent — `write_frame`
+replaces a month wholesale so re-running is always safe, skips a chunk
+already ≥95% covered) and ran it via ENTSO-E (`fetch_imbalance_prices`,
+`fetch_day_ahead_prices`) for 2024-10-18 through 2026-07-31. Verified
+gap-free afterward (`quality.gap_report`) across the full pre-holdout range.
+
+**Day-ahead MTU change, already documented, applied here.** Cached day-ahead
+row counts jump from ~730/month (hourly) to ~2,880/month (15-minute) exactly
+at 2025-10-01 — confirms docs/DOMAIN_NOTES.md Q10's finding (day-ahead MTU
+went from 60 to 15 minutes on 2025-10-01, all SDAC zones). `_resample_day_ahead`
+(`scripts/run_walkforward_evaluation.py`) forward-fills day-ahead onto the
+15-min ISP grid, which is the correct value in both regimes (broadcast
+pre-change, exact match post-change) without needing to branch on the date.
+Q10's recommended *segmentation* of results at this boundary is not yet
+done — the run below reports one number spanning it. Flagged, not fixed.
+
+**LEARModel was originally unusably slow at fold scale — root-caused, not
+worked around blind.** A first full run sat for 4+ hours with zero output
+(Python fully buffers stdout off a TTY, so nothing appeared even after the
+process had clearly finished the first print) and was killed to diagnose
+directly rather than guessed at. Isolated timing on the largest fold's real
+training data: `QuantileRegressor.fit`, ONE quantile, `solver="highs"`:
+
+| Training rows | Time |
+|---|---|
+| 2,000 | 0.15 s |
+| 5,000 | 0.77 s |
+| 10,000 | 2.65 s |
+| ~50,000 (largest fold, unmodified) | **60 s** |
+
+Roughly O(n^1.7–2), not linear — confirmed by measurement, not assumed from
+sklearn's docs. At 19 quantiles × 18 folds this reaches multiple hours.
+**Fix:** `LEARModel.max_train_rows` (default 8000) caps fitting to the most
+recent N rows. A 7-coefficient linear model does not need 50,000 rows to fit
+stably; this changes which rows one specific model's own training window
+uses, not `generate_folds`'s expanding-window fold boundaries or which test
+months get evaluated. Full 18-fold × 6-model run now completes in under two
+minutes.
+
+**First real walk-forward result** (18 folds, 2024-11 through 2026-04, purged
+1 day, expanding training from PICASSO_START, holdout untouched). Mean
+pinball loss, EUR/MWh, lower is better, target = `price_short`:
+
+| Model | n folds | mean | std |
+|---|---|---|---|
+| `persistence` | 18 | 42.50 | 12.23 |
+| `seasonal_naive_1d` (period=96) | **0** | — | — |
+| `seasonal_naive_1w` (period=672) | 18 | 44.66 | 12.45 |
+| `climatology` | 18 | 25.47 | 7.74 |
+| `day_ahead` | 18 | 29.19 | 7.96 |
+| **`lear`** | 18 | **23.20** | 6.90 |
+
+**`seasonal_naive_1d` scored zero folds — a finding, not a bug.** It reads
+`lag_price_short_96`, masked ~43% of every day by the D+1 10:00 settlement
+rule (ADR-023). `pinball_loss`'s NaN guard (ADR-025, this file) now correctly
+refuses to silently mis-score the resulting partial predictions rather than
+quietly averaging over the ~57% of rows that happened to have a value. The
+honest reading: "same ISP yesterday" is not a viable real-time baseline in
+this market at daily granularity — a genuine market-structure finding, not
+an evaluation-harness limitation. `seasonal_naive_1w` (period=672, always
+available per ADR-023's finding on that lag) has no such gap and is
+comparable to the others as reported.
+
+**What this number is and is not.** LEAR beats every baseline, including
+`climatology` (CLAUDE.md §4: "the one to beat, not a formality") — a real
+result, produced by code in this repo, not fabricated. It is **not yet**:
+segmented by regulation state, hour, season, year, or across the MTU boundary
+above, checked for calibration (PIT/coverage — pinball loss alone can hide a
+miscalibrated but sharp forecast), or corrected for multiple comparisons
+beyond the 4 baseline-vs-model tests below. Exactly one model configuration
+was run per model here, so there is nothing yet to correct for beyond the
+baseline comparisons, but that will stop being true the moment a second
+`alpha` or feature set is tried. README's headline is updated to this
+checkpoint, explicitly marked provisional pending the above.
+
+---
+
+## ADR-028: Diebold-Mariano significance tests confirm LEAR's edge
+
+**Date:** 2026-09-20
+**Status:** Accepted
+
+**Context.** ADR-027 reported LEAR 23.20 vs climatology 25.47 mean pinball
+loss (EUR/MWh) but noted the result was "suggestive, not proven." CLAUDE.md
+§4 requires Diebold-Mariano tests with autocorrelation-robust standard errors
+and multiple-comparison correction.
+
+**Implementation.**
+- `diebold_mariano()` in `src/evaluation/metrics.py`: two-sided test with
+  Newey-West HAC standard errors (Bartlett kernel, truncation lag
+  `floor(T^(1/3))` = 37 for T = 52,416 test observations).
+- `pinball_loss_per_obs()`: per-observation mean pinball across quantiles,
+  the loss series the DM test operates on.
+- `holm_bonferroni()`: FWER-controlling correction, uniformly more powerful
+  than Bonferroni. 4 comparisons (each model vs climatology).
+- 7 new tests: DM detection, equal-model case, autocorrelation handling,
+  NaN rejection, Holm correction.
+
+**Results (52,416 test observations, 18 monthly folds).**
+
+| Model vs Climatology | DM stat | Raw p-value | Holm-corrected p | Significant |
+|---|---|---|---|---|
+| LEAR | -16.55 | 1.7 × 10⁻⁶¹ | 3.5 × 10⁻⁶¹ | YES (better) |
+| Day-ahead | +16.48 | 4.7 × 10⁻⁶¹ | 4.7 × 10⁻⁶¹ | YES (worse) |
+| Persistence | +22.04 | 1.2 × 10⁻¹⁰⁷ | 3.7 × 10⁻¹⁰⁷ | YES (worse) |
+| Seasonal-naive 1w | +23.10 | 5.0 × 10⁻¹¹⁸ | 2.0 × 10⁻¹¹⁷ | YES (worse) |
+
+Negative DM = first model has lower loss (is better). LEAR's improvement
+over climatology is significant at any conventional threshold, surviving
+Holm-Bonferroni correction for 4 simultaneous tests. The p-values are
+extremely small because 52k observations give enormous power — the
+economically relevant question is the *magnitude* of improvement (2.3
+EUR/MWh, or ~9%), not whether it is distinguishable from zero.
+
+**What remains.** Significance is necessary but not sufficient: calibration
+(PIT/coverage), segmented reporting, and — when a second model configuration
+is tried — a multiple-comparison correction over the model search space.
+The DM test also does not answer whether LEAR's edge is stable across
+regimes; that is the segmented-reporting question.
+
+---
+
+## ADR-029 — GBM evaluation results and model comparison
+
+**Date**: 2026-09-20
+**Status**: observation
+
+### Finding
+
+Quantile-GBM (LightGBM, one model per quantile) achieves pinball loss
+23.17 EUR/MWh, virtually identical to LEAR's 23.20. Both beat climatology
+(25.47) with extreme significance (DM stats of -15.31 and -16.55
+respectively, p << 0.001, Holm-Bonferroni corrected over 5 comparisons).
+
+| Model | Mean Pinball | Std | DM vs Climatology | p-value |
+|---|---|---|---|---|
+| GBM | 23.17 | 7.09 | -15.31 | < 10^-50 |
+| LEAR | 23.20 | 6.90 | -16.55 | < 10^-60 |
+| Climatology | 25.47 | 7.74 | (reference) | — |
+| Day-ahead | 29.19 | 7.96 | +16.48 | < 10^-60 |
+| Persistence | 42.50 | 12.23 | +22.04 | < 10^-100 |
+
+### Interpretation
+
+The 0.03 EUR/MWh difference between GBM and LEAR is economically negligible.
+LEAR's slightly lower standard deviation (6.90 vs 7.09) suggests marginally
+more consistent fold-to-fold performance. Both models represent a ~9%
+improvement over the hour-of-day/day-of-week climatological baseline.
+
+The seasonal_naive_1d baseline failed on all folds (NaN in predictions from
+data gaps). This is a known issue: the first 96 ISPs of training data after
+the PICASSO structural break (2024-10-18) have no same-day-yesterday
+reference.
+
+### Decision
+
+Use both LEAR and GBM in the backtest. The near-identical performance
+means the dispatch optimisation results should be insensitive to model
+choice — which is itself a finding worth reporting. Total model
+configurations searched: 2 (LEAR + GBM); multiple-comparison correction
+via Holm-Bonferroni is already applied.
+
+---
+
+## ADR-030 — osqp/pandas DLL conflict on Windows
+
+**Date**: 2026-09-20
+**Status**: workaround
+
+osqp 1.1.3's native DLL segfaults when loaded after pandas has already
+imported (likely a BLAS/LAPACK DLL conflict). We only use CLARABEL, so
+osqp is never called, but cvxpy probes all installed solvers at import
+time.
+
+**Workaround**: `tests/cvxpy/conftest.py` forces `import cvxpy` before
+any test module can trigger a pandas import. The dispatch tests were
+already isolated in `tests/cvxpy/` for the lightgbm variant of this
+conflict (ADR from previous session); this conftest makes it robust
+to import ordering within the cvxpy test directory.
+
+---
+
+## ADR-031 — Phase 4 backtest: deterministic 15.9% PF, CVaR 14.9% PF
+
+**Date**: 2026-09-20
+**Status**: accepted (finding), updated with CVaR fix
+
+Walk-forward backtest over 18 monthly folds (2024-11 to 2026-04), 52,416 ISPs,
+10 MW / 40 MWh battery at EUR 5/MWh degradation.
+
+**Results (after stratified scenario fix):**
+- Perfect foresight: EUR 5,840,081 (upper bound)
+- Deterministic (rolling horizon, median forecast): EUR 929,535 (15.9% of PF)
+- CVaR (risk_aversion=0.5, stratified quantile, 20 scenarios): EUR 870,398 (14.9% of PF)
+- Bootstrap 95% CIs: deterministic [681K, 1.20M], CVaR [607K, 1.16M]
+
+The 15.9% and 14.9% PF capture ratios are consistent with public-data
+imbalance strategies in the literature (10–20%). CIs overlap — deterministic
+and CVaR are statistically indistinguishable on this sample.
+
+**CVaR failure and fix (c97bbf1):** the original Schaake shuffle sampled
+independent quantile levels per ISP, destroying the forecast's directional
+signal. Even at ra=0.0 (pure expected value), the old frontier earned
+near-zero (~EUR 6K over 3 months). Root cause: the cross-scenario mean at
+each ISP collapsed toward the forecast distribution mean, washing out the
+median signal the deterministic optimizer exploits. Fix: stratified quantile
+sampling — each of 20 scenarios picks a consistent base quantile level
+(evenly spaced 0.025 to 0.975), with small per-ISP jitter (std=0.03), so
+each scenario preserves the forecast's temporal shape while varying the
+overall price level. CVaR went from EUR -394K to EUR +870K.
+
+**Efficient frontier (last 3 months of walk-forward):**
+- ra=0.2: EUR 86K, CVaR5 = -280
+- ra=0.5: EUR 84K, CVaR5 = -274
+- ra=0.9: EUR 67K, CVaR5 = -273
+The frontier is relatively flat — expected revenue and tail risk move together
+in this market, which makes sense given the skewness of imbalance prices.
+
+**Per-year breakdown:**
+- 2024 (2 months): det EUR 74K, CVaR EUR 54K (CVaR slightly trails)
+- 2025 (full year): det EUR 981K, CVaR EUR 983K (effectively identical)
+- 2026 (4 months): det EUR 143K, CVaR EUR 110K
+
+**Market impact model:** sqrt(capacity_mw / 500). Revenue-per-MW degrades from
+EUR 87,596/MW at 1 MW to EUR 39,383/MW at 100 MW. At 500 MW, the model says
+the signal is fully absorbed. This is a modelling choice (not measured) and
+is applied post-hoc to the deterministic dispatch (the battery doesn't
+re-optimize given the impact). The saturation curve is directionally correct
+but overstates losses at high capacity because it doesn't model the
+operator's exit decision.
+
+---
+
+## ADR-032 — Final holdout: deterministic 27.9% PF, improved over walk-forward
+
+**Date**: 2026-09-20
+**Status**: accepted (finding, one-time per R2)
+
+Holdout period: 2026-05-01 to 2026-08-01 (6,528 ISPs, 68 days).
+Trained on all pre-holdout data (53,760 ISPs).
+
+**Forecast evaluation on holdout:**
+- GBM pinball loss: 22.51 (WF: 23.17, improved)
+- LEAR pinball loss: 23.85 (WF: 23.20, slightly degraded)
+- GBM calibration error: 0.0587 (tighter than WF)
+- Both significantly beat climatology (p ≈ 0)
+
+**Dispatch on holdout:**
+- Perfect foresight: EUR 754,119
+- Deterministic: EUR 210,673 (27.9% PF), 95% CI [94K, 351K]
+- CVaR (0.5): EUR 185,236 (24.6% PF), 95% CI [70K, 324K]
+- Annualised: det EUR 1.13M vs WF EUR 621K (+82%)
+
+**Interpretation:** the holdout outperforms walk-forward on all dispatch
+metrics. This is likely period-specific — May-July 2026 may have been more
+volatile or more predictable — rather than evidence of model improvement.
+The walk-forward training set grows by only ~10% between the last WF fold
+and the holdout training cut. The improvement, honestly reported, is a
+positive finding but should not be extrapolated.
+
+---
+
+## ADR-033 — Phase 5 architecture: Streamlit + FastAPI
+
+**Date**: 2026-09-20
+**Status**: accepted
+
+Frontend: Streamlit (single Python file, no build step, no npm).
+Backend: FastAPI (5 endpoints for programmatic access).
+Both read precomputed JSON from work/.
+
+Justification: ponytail lean zone — "do not build a component library, do
+not add a state-management dependency for four screens." Streamlit gives us
+interactive Plotly charts, tabs, sliders, and responsive layout in one file.
+FastAPI adds programmatic access without coupling to the frontend.
+
+Deployment target: Streamlit Community Cloud (free tier, stable).
+
+Live forecast job: GitHub Actions cron every 15 min during peak hours.
+Logs to forecast_log/forecasts.jsonl — unfalsifiable, timestamped records.

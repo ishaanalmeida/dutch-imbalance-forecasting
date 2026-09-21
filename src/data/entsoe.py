@@ -5,17 +5,15 @@ canonical UTC indexing, and column naming that matches config/market_rules.yaml
 field names (`price_long`, `price_short`) so data_availability can be
 consulted by the same name.
 
-TOKEN-GATED. There is no ENTSOE_API_TOKEN yet (requested 2026-08-04, pending
-issuance). Every function below that calls EntsoePandasClient is exercised
-only by an `@pytest.mark.integration` test, skipped by default -- see
+TOKEN ISSUED 2026-08-07 (requested 2026-08-04). Every function below that
+calls EntsoePandasClient is exercised only by an `@pytest.mark.integration`
+test, skipped by default unless `ENTSOE_API_TOKEN` is set -- see
 pyproject.toml addopts (`-m 'not integration'`) and tests/test_entsoe.py.
 
-UNVERIFIED until the token arrives and the first live call runs: whether
-`query_imbalance_prices` actually returns two distinct columns for NL (the
-dual-price structure for regulation state 2, DOMAIN_NOTES.md Q3) or just one.
-If only one, this item is single-priced and TenneT's own feed is required for
-the take/feed split -- see tests/test_entsoe.py's first integration test and
-this module's docstring on fetch_imbalance_prices.
+VERIFIED 2026-08-07 against live data: `query_imbalance_prices` returns two
+distinct columns for NL (`Long`/`Short`), resolving the dual-price question
+from DOMAIN_NOTES.md Q3 -- TenneT's own feed is not required for the
+take/feed split. See `fetch_imbalance_prices`'s own docstring for the sample.
 """
 
 from __future__ import annotations
