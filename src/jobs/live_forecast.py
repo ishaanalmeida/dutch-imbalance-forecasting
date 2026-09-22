@@ -64,7 +64,10 @@ def _dispatch_recommendation(quantiles: dict[str, float]) -> dict[str, str]:
     if q75 < -30:
         return {"action": "charge", "reason": f"Price likely negative (q75={q75:.0f})"}
     if q50 > 15:
-        return {"action": "discharge", "reason": f"Median positive ({q50:.0f}), moderate confidence"}
+        return {
+            "action": "discharge",
+            "reason": f"Median positive ({q50:.0f}), moderate confidence",
+        }
     if q50 < -15:
         return {"action": "charge", "reason": f"Median negative ({q50:.0f}), moderate confidence"}
     return {"action": "hold", "reason": f"Price near zero (q50={q50:.0f}), insufficient edge"}
