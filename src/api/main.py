@@ -1,64 +1,140 @@
-"""FastAPI backend — programmatic access to backtest and evaluation results.
+"""Biosync NL Forecasting API.
 
-Endpoints mirror the four demo screens: forecast (placeholder), track record,
-backtest results, and what-if dispatch simulation.
+Phase B: live probabilistic forecasts with model versioning and scored
+track record, plus the original backtest/evaluation result endpoints.
 """
 
 from __future__ import annotations
 
 import json
+import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any, AsyncIterator
 
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+
+from src.api.forecast_service import ForecastService
+
+logger = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 BACKTEST_PATH = ROOT / "work" / "backtest" / "backtest_results.json"
 EVAL_PATH = ROOT / "work" / "evaluation" / "walkforward_results.json"
 
+service = ForecastService()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    logger.info("Training model at startup...")
+    try:
+        info = service.train()
+        logger.info(
+            "Model ready: %s (%d ISPs, data to %s)",
+            info.get("model_id"),
+            info.get("n_training_isps"),
+            info.get("training_window", {}).get("end"),
+        )
+    except Exception:
+        logger.exception("Model training failed — forecast endpoints will 503")
+    yield
+
+
 app = FastAPI(
-    title="NL Imbalance Lab API",
-    description="Dutch imbalance market forecasting & battery dispatch results.",
-    version="0.1.0",
+    title="Biosync NL Forecasting API",
+    description=(
+        "Probabilistic imbalance-price forecasting for the Dutch market. "
+        "Quantile forecasts with calibrated uncertainty, regulation-state "
+        "probabilities, and dispatch recommendations."
+    ),
+    version="0.2.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_methods=["GET"],
+    allow_methods=["GET", "POST"],
 )
 
 
-def _load_json(path: Path) -> dict:
+def _load_json(path: Path) -> dict[str, Any]:
     with open(path) as f:
-        return json.load(f)
+        return json.load(f)  # type: ignore[no-any-return]
+
+
+def _require_model() -> None:
+    if not service.ready:
+        raise HTTPException(503, "Model not trained — check server logs")
+
+
+# ── v1 endpoints (Phase B) ──────────────────────────────────────────────
+
+
+@app.get("/v1/forecast")
+def get_forecast() -> dict[str, Any]:
+    """Live probabilistic forecast for the next ISP."""
+    _require_model()
+    return service.forecast()
+
+
+@app.get("/v1/model")
+def get_model_info() -> dict[str, Any]:
+    """Current model metadata and version."""
+    return service.model_info()
+
+
+@app.post("/v1/retrain")
+def retrain() -> dict[str, Any]:
+    """Retrain the model on latest cached data."""
+    return service.train()
+
+
+@app.get("/v1/track-record")
+def get_track_record(
+    limit: int = Query(100, ge=1, le=10000),
+) -> dict[str, Any]:
+    """Scored forecast track record from the live log."""
+    return service.track_record(limit=limit)
+
+
+# ── health ───────────────────────────────────────────────────────────────
 
 
 @app.get("/health")
-def health() -> dict:
-    return {"status": "ok"}
+def health() -> dict[str, Any]:
+    return {
+        "status": "ok",
+        "model_ready": service.ready,
+        "model_id": service.model_info().get("model_id") if service.ready else None,
+    }
+
+
+# ── legacy endpoints (backtest results) ─────────────────────────────────
 
 
 @app.get("/api/backtest")
-def backtest_results() -> dict:
+def backtest_results() -> dict[str, Any]:
     return _load_json(BACKTEST_PATH)
 
 
 @app.get("/api/evaluation")
-def evaluation_results() -> dict:
+def evaluation_results() -> dict[str, Any]:
     return _load_json(EVAL_PATH)
 
 
 @app.get("/api/backtest/frontier")
-def efficient_frontier() -> list:
+def efficient_frontier() -> list[Any]:
     bt = _load_json(BACKTEST_PATH)
-    return bt["efficient_frontier"]
+    return bt["efficient_frontier"]  # type: ignore[no-any-return]
 
 
 @app.get("/api/backtest/saturation")
-def saturation_curve() -> list:
+def saturation_curve() -> list[Any]:
     bt = _load_json(BACKTEST_PATH)
-    return bt["saturation_curve"]
+    return bt["saturation_curve"]  # type: ignore[no-any-return]
 
 
 @app.get("/api/whatif")
@@ -68,7 +144,7 @@ def whatif(
     efficiency: float = Query(0.90, ge=0.5, le=0.99),
     degradation: float = Query(5.0, ge=0, le=50),
     risk_aversion: float = Query(0.5, ge=0, le=1),
-) -> dict:
+) -> dict[str, Any]:
     """Scaled revenue estimate from backtest results."""
     import numpy as np
 
