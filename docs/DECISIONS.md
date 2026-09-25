@@ -1345,3 +1345,33 @@ Deployment target: Streamlit Community Cloud (free tier, stable).
 
 Live forecast job: GitHub Actions cron every 15 min during peak hours.
 Logs to forecast_log/forecasts.jsonl — unfalsifiable, timestamped records.
+
+## ADR-034 — Live forecast: issue-time information cutoff, 8 h horizon
+
+**Date**: 2026-09-25
+**Status**: accepted
+
+**Problem.** Until 2026-09-25 the live job targeted "last cached ISP + 15 min".
+Settled prices publish in daily batches, so every run of a day logged the same
+already-past ISP (00:00 Amsterdam) with identical numbers — hindcasts, not
+forecasts. Those 25 entries stay in `forecasts.jsonl` (append-only record); the
+app drops any entry issued after its target ISP began.
+
+**Decision 1 — issue-time cutoff (R1).** `build_features(..., as_of=)` decides
+every row after `as_of` at `as_of`, not at its own ISP start. ADR-005's
+ISP-start decision time is right for the backtest, where the decision for ISP
+t is taken at t. A live forecast for ISP t+k is taken when the job runs; masking
+at t+k would let a 09:00 run see yesterday's settled price (published D+1 10:00)
+for an 11:00 target. Rows at or before `as_of` (all training rows) are unchanged.
+Test: `test_as_of_caps_the_decision_time_for_rows_after_it`.
+
+**Decision 2 — horizon 32 ISPs (8 h), not 8 (2 h).** The brief suggested the
+next 1–8 ISPs. GitHub throttles the 15-min cron: observed gaps between runs are
+3–4 h by day and up to ~6 h overnight, so a 2 h horizon leaves most of the day
+without a live forecast. 8 h outlasts the longest observed gap. Not 24 h: at
+~700 B per line and ~8 runs/day, the git-committed log would grow ~200 MB/yr;
+32 ISPs keeps it near ~65 MB/yr. The dispatch recommendation stays a next-ISP
+signal; the app shows the latest-issued forecast per target, and the log keeps
+`forecast_issued_at` so the track record can be segmented by lead time.
+Target ISPs whose day-ahead price is not yet published are skipped, never
+filled.

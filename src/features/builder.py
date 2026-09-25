@@ -27,7 +27,7 @@ it fail silently.
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any, cast
 
 import numpy as np
@@ -62,22 +62,27 @@ def _require_gapfree_grid(idx: pd.DatetimeIndex) -> None:
         )
 
 
-def _availability_mask(idx: pd.DatetimeIndex, field: str, lag_isps: int) -> pd.Series[bool]:
+def _availability_mask(
+    idx: pd.DatetimeIndex, field: str, lag_isps: int, as_of: datetime | None = None
+) -> pd.Series[bool]:
     """True where `field`, `lag_isps` ISPs before each row's own ISP, was
     genuinely retrievable strictly before that row's decision time (ISP
-    start, ADR-005). One `is_available` call per row: cheap relative to the
-    dataset sizes here, and the honest way to answer a question whose answer
-    depends on each row's own wall-clock date.
+    start, ADR-005, capped at `as_of` when given -- ADR-034). One
+    `is_available` call per row: cheap relative to the dataset sizes here,
+    and the honest way to answer a question whose answer depends on each
+    row's own wall-clock date.
 
     Lets `UnresolvedLagError` propagate rather than catching it: a catalogue
     entry naming a field `data_availability` refuses outright is a catalogue
     bug, not a per-row state to mask away.
     """
     step = timedelta(minutes=ISP_MINUTES)
-    mask = [
-        is_available(field, (ts - lag_isps * step).to_pydatetime(), ts.to_pydatetime())
-        for ts in idx
-    ]
+    mask = []
+    for ts in idx:
+        decision = ts.to_pydatetime()
+        if as_of is not None:
+            decision = min(decision, as_of)
+        mask.append(is_available(field, (ts - lag_isps * step).to_pydatetime(), decision))
     return pd.Series(mask, index=idx, dtype=bool)
 
 
@@ -107,7 +112,11 @@ def _masked_lag(
     return series.shift(lag_isps).where(mask)
 
 
-def build_features(prices: pd.DataFrame, day_ahead: pd.Series[Any] | None = None) -> pd.DataFrame:
+def build_features(
+    prices: pd.DataFrame,
+    day_ahead: pd.Series[Any] | None = None,
+    as_of: datetime | None = None,
+) -> pd.DataFrame:
     """Build every catalogued feature for the given price history.
 
     `prices` is indexed by ISP start (tz-aware UTC) with `price_long` and
@@ -115,6 +124,11 @@ def build_features(prices: pd.DataFrame, day_ahead: pd.Series[Any] | None = None
     `day_ahead_price` is always emitted (NaN where `day_ahead` is not
     supplied) so the column set never depends on which optional inputs the
     caller happened to pass -- see docs/DECISIONS.md ADR-023.
+
+    `as_of` is the live-forecast issue time: rows after it are decided at
+    `as_of`, not at their own ISP start, so a multi-ISP-ahead forecast only
+    sees what was published when it was made (ADR-034). Rows at or before
+    `as_of` are unaffected.
     """
     _require_aware(prices)
     idx = cast(pd.DatetimeIndex, prices.index)
@@ -127,16 +141,16 @@ def build_features(prices: pd.DataFrame, day_ahead: pd.Series[Any] | None = None
     # lag_price_short_96 and lag_spread_96 share the same (field, lag) pair,
     # so they share the same availability mask -- computed once and reused
     # rather than re-running the per-row is_available loop twice (ADR-025).
-    mask_96 = _availability_mask(idx, _SETTLED, 96)
+    mask_96 = _availability_mask(idx, _SETTLED, 96, as_of)
     out["lag_price_short_96"] = _masked_lag(short, mask_96, _SETTLED, 96)
     out["lag_price_short_192"] = _masked_lag(
-        short, _availability_mask(idx, _SETTLED, 192), _SETTLED, 192
+        short, _availability_mask(idx, _SETTLED, 192, as_of), _SETTLED, 192
     )
     out["lag_price_short_freshest"] = out["lag_price_short_96"].where(
         out["lag_price_short_96"].notna(), out["lag_price_short_192"]
     )
     out["lag_price_short_672"] = _masked_lag(
-        short, _availability_mask(idx, _SETTLED, 672), _SETTLED, 672
+        short, _availability_mask(idx, _SETTLED, 672, as_of), _SETTLED, 672
     )
     out["lag_spread_96"] = _masked_lag(spread, mask_96, _SETTLED, 96)
 

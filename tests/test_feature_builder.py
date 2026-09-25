@@ -140,6 +140,27 @@ def test_yesterdays_price_is_masked_before_the_settlement_run() -> None:
     assert 0 < len(col) < len(out), "expected a partial mask, not all-or-nothing"
 
 
+def test_as_of_caps_the_decision_time_for_rows_after_it() -> None:
+    """A live forecast is decided when the job runs, not at each target's own
+    ISP start. Run at 09:00 CET: yesterday's settled price (D+1 10:00) is not
+    yet published, so an 11:00 CET target must not see it -- even though a
+    decision taken at 11:00 could."""
+    prices = _prices(96 * 5)
+    as_of = pd.Timestamp("2025-01-04 08:00", tz="UTC")  # 09:00 CET
+    target = pd.Timestamp("2025-01-04 10:00", tz="UTC")  # 11:00 CET
+
+    plain = build_features(prices)
+    capped = build_features(prices, as_of=as_of.to_pydatetime())
+
+    assert pd.notna(plain.at[target, "lag_price_short_96"]), "precondition"
+    assert pd.isna(capped.at[target, "lag_price_short_96"])
+    assert pd.isna(capped.at[target, "lag_spread_96"])
+    assert capped.at[target, "lag_price_short_freshest"] == capped.at[target, "lag_price_short_192"]
+    # Rows up to as_of are decided at their own ISP start, exactly as before.
+    upto = plain.index <= as_of
+    pd.testing.assert_frame_equal(plain[upto], capped[upto])
+
+
 def test_masked_lag_raises_when_never_available_across_a_multi_day_window() -> None:
     """The general form of the lag_price_short_1 bug ADR-023 found and removed:
     a lag unavailable for every row of a multi-day window is a catalogue bug,
