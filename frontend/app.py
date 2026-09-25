@@ -12,6 +12,7 @@ from datetime import datetime
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
@@ -164,12 +165,23 @@ with tab_forecast:
             col_d.metric("Dispatch", f"{colors.get(action, '')} {action}")
             col_d.caption(disp.get("reason", ""))
 
-        recent = fc_log[-min(len(fc_log), 96) :]
+        # Last 48 h of targets on a full 15-min grid: an ISP no run covered is
+        # NaN, which plotly draws as a break instead of a line bridging the gap.
+        recent_df = pd.DataFrame(
+            {
+                "median": [r["median"] for r in fc_log],
+                "q10": [r["quantiles"].get("0.10", r["median"]) for r in fc_log],
+                "q90": [r["quantiles"].get("0.90", r["median"]) for r in fc_log],
+            },
+            index=pd.to_datetime([r["target_isp"] for r in fc_log]),
+        )
+        last_target = recent_df.index[-1]
+        recent_df = recent_df.loc[last_target - pd.Timedelta(hours=48) :]
+        recent_df = recent_df.reindex(pd.date_range(recent_df.index[0], last_target, freq="15min"))
+        recent = recent_df.dropna()
         fig_fc = go.Figure()
-        times = [r["target_isp"] for r in recent]
-        medians = [r["median"] for r in recent]
-        q10 = [r["quantiles"].get("0.10", r["median"]) for r in recent]
-        q90 = [r["quantiles"].get("0.90", r["median"]) for r in recent]
+        times = recent_df.index
+        medians, q10, q90 = recent_df["median"], recent_df["q10"], recent_df["q90"]
         fig_fc.add_trace(
             go.Scatter(
                 x=times,
@@ -205,7 +217,10 @@ with tab_forecast:
             margin=dict(t=20),
         )
         st.plotly_chart(fig_fc, use_container_width=True)
-        st.caption(f"Showing last {len(recent)} logged forecasts. Total in log: {len(fc_log)}.")
+        st.caption(
+            f"Latest forecast for each of {len(recent)} ISPs in the last 48 h; breaks are "
+            f"ISPs no run covered. Live forecasts in log: {len(fc_log)}."
+        )
     else:
         st.info(
             "The scheduled forecast job has not yet produced forecasts. "

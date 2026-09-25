@@ -6,7 +6,7 @@ a few weeks you have a genuine, unfalsifiable out-of-sample track record."
 Each run:
   1. Loads the latest cached imbalance price data
   2. Trains a GBM model on all available data
-  3. Produces quantile forecasts for the next 8 ISPs (2 hours)
+  3. Produces quantile forecasts for the next 32 ISPs (8 hours, ADR-034)
   4. Derives regulation state probabilities and dispatch recommendation
   5. Logs the forecast with a timestamp to forecast_log/forecasts.jsonl
 """
@@ -29,7 +29,7 @@ from src.models.lear import FEATURE_COLUMNS
 
 LOG_DIR = Path("forecast_log")
 LOG_FILE = LOG_DIR / "forecasts.jsonl"
-N_AHEAD = 8
+N_AHEAD = 32  # 8 h: outlasts the longest observed gap between cron runs (ADR-034)
 
 
 def _regulation_state_probs(quantiles: dict[str, float]) -> dict[str, float]:
@@ -106,7 +106,8 @@ def main() -> None:
     da = da_raw.reindex(grid, method="ffill")
     da.loc[targets_idx] = da_raw.reindex(targets_idx)
 
-    X = build_features(prices_ext, day_ahead=da)
+    # as_of: every target is decided now, not at its own ISP start (ADR-034).
+    X = build_features(prices_ext, day_ahead=da, as_of=run_ts)
     X_train = X.loc[prices.index]
     y = build_targets(prices)["price_short"]
 
