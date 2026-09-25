@@ -157,7 +157,8 @@ def test_as_of_caps_the_decision_time_for_rows_after_it() -> None:
     assert pd.isna(capped.at[target, "lag_spread_96"])
     assert capped.at[target, "lag_price_short_freshest"] == capped.at[target, "lag_price_short_192"]
     # Rows up to as_of are decided at their own ISP start, exactly as before.
-    pd.testing.assert_frame_equal(plain.loc[:as_of], capped.loc[:as_of])
+    upto = plain.index <= as_of
+    pd.testing.assert_frame_equal(plain[upto], capped[upto])
 
 
 def test_masked_lag_raises_when_never_available_across_a_multi_day_window() -> None:
