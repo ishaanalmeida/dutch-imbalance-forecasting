@@ -1,46 +1,24 @@
 """Biosync NL Forecasting API.
 
-Phase B: live probabilistic forecasts with model versioning and scored
-track record, plus the original backtest/evaluation result endpoints.
+Phase B: serves the live forecast log (written by the scheduled job in
+src.jobs.live_forecast) and its scored track record, plus the original
+backtest/evaluation result endpoints.
 """
 
 from __future__ import annotations
 
 import json
-import logging
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
-from src.api.forecast_service import ForecastService
-
-logger = logging.getLogger(__name__)
+from src.api import forecast_service
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 BACKTEST_PATH = ROOT / "work" / "backtest" / "backtest_results.json"
 EVAL_PATH = ROOT / "work" / "evaluation" / "walkforward_results.json"
-
-service = ForecastService()
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    logger.info("Training model at startup...")
-    try:
-        info = service.train()
-        logger.info(
-            "Model ready: %s (%d ISPs, data to %s)",
-            info.get("model_id"),
-            info.get("n_training_isps"),
-            info.get("training_window", {}).get("end"),
-        )
-    except Exception:
-        logger.exception("Model training failed — forecast endpoints will 503")
-    yield
 
 
 app = FastAPI(
@@ -50,14 +28,13 @@ app = FastAPI(
         "Quantile forecasts with calibrated uncertainty, regulation-state "
         "probabilities, and dispatch recommendations."
     ),
-    version="0.2.0",
-    lifespan=lifespan,
+    version="0.3.0",
 )
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET"],
 )
 
 
@@ -66,39 +43,26 @@ def _load_json(path: Path) -> dict[str, Any]:
         return json.load(f)  # type: ignore[no-any-return]
 
 
-def _require_model() -> None:
-    if not service.ready:
-        raise HTTPException(503, "Model not trained — check server logs")
-
-
 # ── v1 endpoints (Phase B) ──────────────────────────────────────────────
 
 
 @app.get("/v1/forecast")
 def get_forecast() -> dict[str, Any]:
-    """Live probabilistic forecast for the next ISP."""
-    _require_model()
-    return service.forecast()
-
-
-@app.get("/v1/model")
-def get_model_info() -> dict[str, Any]:
-    """Current model metadata and version."""
-    return service.model_info()
-
-
-@app.post("/v1/retrain")
-def retrain() -> dict[str, Any]:
-    """Retrain the model on latest cached data."""
-    return service.train()
+    """Latest-issued probabilistic forecast for every ISP not yet ended."""
+    body = forecast_service.live_forecast()
+    if not body["forecasts"]:
+        raise HTTPException(
+            503, f"No live forecast: last issued at {body['last_issued_at']}, all targets past"
+        )
+    return body
 
 
 @app.get("/v1/track-record")
 def get_track_record(
     limit: int = Query(100, ge=1, le=10000),
 ) -> dict[str, Any]:
-    """Scored forecast track record from the live log."""
-    return service.track_record(limit=limit)
+    """Every ex-ante forecast from the live log, scored where settled."""
+    return forecast_service.track_record(limit=limit)
 
 
 # ── health ───────────────────────────────────────────────────────────────
@@ -106,11 +70,7 @@ def get_track_record(
 
 @app.get("/health")
 def health() -> dict[str, Any]:
-    return {
-        "status": "ok",
-        "model_ready": service.ready,
-        "model_id": service.model_info().get("model_id") if service.ready else None,
-    }
+    return {"status": "ok", "last_issued_at": forecast_service.live_forecast()["last_issued_at"]}
 
 
 # ── legacy endpoints (backtest results) ─────────────────────────────────
