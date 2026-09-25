@@ -56,9 +56,7 @@ def test_perfect_foresight_dominates_deterministic(
     det = dispatch_deterministic(noisy, params)
     # Evaluate deterministic against actual prices
     dt = params.isp_hours
-    det_actual_rev = float(
-        np.sum((det.discharge_mw - det.charge_mw) * prices) * dt
-    )
+    det_actual_rev = float(np.sum((det.discharge_mw - det.charge_mw) * prices) * dt)
     assert pf.revenue_eur >= det_actual_rev - 1e-6
 
 

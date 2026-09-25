@@ -149,30 +149,48 @@ with tab_forecast:
             col_d.metric("Dispatch", f"{colors.get(action, '')} {action}")
             col_d.caption(disp.get("reason", ""))
 
-        recent = fc_log[-min(len(fc_log), 96):]
+        recent = fc_log[-min(len(fc_log), 96) :]
         fig_fc = go.Figure()
         times = [r["target_isp"] for r in recent]
         medians = [r["median"] for r in recent]
         q10 = [r["quantiles"].get("0.10", r["median"]) for r in recent]
         q90 = [r["quantiles"].get("0.90", r["median"]) for r in recent]
-        fig_fc.add_trace(go.Scatter(
-            x=times, y=q90, mode="lines", line=dict(width=0), showlegend=False,
-        ))
-        fig_fc.add_trace(go.Scatter(
-            x=times, y=q10, mode="lines", line=dict(width=0),
-            fill="tonexty", fillcolor="rgba(31,119,180,0.2)",
-            name="10-90% interval",
-        ))
-        fig_fc.add_trace(go.Scatter(
-            x=times, y=medians, mode="lines",
-            line=dict(color="#1f77b4", width=2), name="Median",
-        ))
+        fig_fc.add_trace(
+            go.Scatter(
+                x=times,
+                y=q90,
+                mode="lines",
+                line=dict(width=0),
+                showlegend=False,
+            )
+        )
+        fig_fc.add_trace(
+            go.Scatter(
+                x=times,
+                y=q10,
+                mode="lines",
+                line=dict(width=0),
+                fill="tonexty",
+                fillcolor="rgba(31,119,180,0.2)",
+                name="10-90% interval",
+            )
+        )
+        fig_fc.add_trace(
+            go.Scatter(
+                x=times,
+                y=medians,
+                mode="lines",
+                line=dict(color="#1f77b4", width=2),
+                name="Median",
+            )
+        )
         fig_fc.update_layout(
-            yaxis_title="EUR/MWh", height=350, margin=dict(t=20),
+            yaxis_title="EUR/MWh",
+            height=350,
+            margin=dict(t=20),
         )
         st.plotly_chart(fig_fc, use_container_width=True)
-        st.caption(f"Showing last {len(recent)} logged forecasts. "
-                   f"Total in log: {len(fc_log)}.")
+        st.caption(f"Showing last {len(recent)} logged forecasts. Total in log: {len(fc_log)}.")
     else:
         st.info(
             "The scheduled forecast job has not yet produced forecasts. "
@@ -224,10 +242,15 @@ with tab_track:
             "percentile should be exceeded 50% of the time, its 90th 90%, etc."
         )
         fig_cal = go.Figure()
-        fig_cal.add_trace(go.Scatter(
-            x=[0, 1], y=[0, 1], mode="lines",
-            line=dict(dash="dash", color="grey"), name="Perfect",
-        ))
+        fig_cal.add_trace(
+            go.Scatter(
+                x=[0, 1],
+                y=[0, 1],
+                mode="lines",
+                line=dict(dash="dash", color="grey"),
+                name="Perfect",
+            )
+        )
         for m, lab, color in [
             ("gbm", "GBM", "#1f77b4"),
             ("lear", "LEAR", "#ff7f0e"),
@@ -235,16 +258,20 @@ with tab_track:
         ]:
             cov = ev["calibration"][m]["coverage"]
             taus = sorted(cov.keys(), key=float)
-            fig_cal.add_trace(go.Scatter(
-                x=[float(t) for t in taus],
-                y=[cov[t] for t in taus],
-                mode="lines+markers", name=lab,
-                line=dict(color=color),
-            ))
+            fig_cal.add_trace(
+                go.Scatter(
+                    x=[float(t) for t in taus],
+                    y=[cov[t] for t in taus],
+                    mode="lines+markers",
+                    name=lab,
+                    line=dict(color=color),
+                )
+            )
         fig_cal.update_layout(
             xaxis_title="Nominal quantile",
             yaxis_title="Empirical coverage",
-            height=400, margin=dict(t=20),
+            height=400,
+            margin=dict(t=20),
         )
         st.plotly_chart(fig_cal, use_container_width=True)
 
@@ -262,17 +289,20 @@ with tab_track:
         total = sum(pit)
         uniform = total / n_bins
         fig_pit = go.Figure()
-        fig_pit.add_trace(go.Bar(
-            x=[f"{b:.1f}" for b in bin_edges],
-            y=pit,
-            marker_color="#1f77b4",
-            name="GBM PIT",
-        ))
-        fig_pit.add_hline(y=uniform, line_dash="dash", line_color="red",
-                          annotation_text="Uniform")
+        fig_pit.add_trace(
+            go.Bar(
+                x=[f"{b:.1f}" for b in bin_edges],
+                y=pit,
+                marker_color="#1f77b4",
+                name="GBM PIT",
+            )
+        )
+        fig_pit.add_hline(y=uniform, line_dash="dash", line_color="red", annotation_text="Uniform")
         fig_pit.update_layout(
-            xaxis_title="PIT bin", yaxis_title="Count",
-            height=400, margin=dict(t=20),
+            xaxis_title="PIT bin",
+            yaxis_title="Count",
+            height=400,
+            margin=dict(t=20),
         )
         st.plotly_chart(fig_pit, use_container_width=True)
 
@@ -286,12 +316,14 @@ with tab_track:
     dm = ev["dm_tests_vs_reference"]
     dm_rows = []
     for d in dm:
-        dm_rows.append({
-            "Model": d["model"],
-            "DM Statistic": f"{d['dm_stat']:.2f}",
-            "p-value": f"{d['p_value']:.2e}",
-            "Significant (0.05)": "Yes" if d["p_value"] < 0.05 else "No",
-        })
+        dm_rows.append(
+            {
+                "Model": d["model"],
+                "DM Statistic": f"{d['dm_stat']:.2f}",
+                "p-value": f"{d['p_value']:.2e}",
+                "Significant (0.05)": "Yes" if d["p_value"] < 0.05 else "No",
+            }
+        )
     st.dataframe(dm_rows, hide_index=True, use_container_width=True)
 
     dm_lg = ev["dm_lear_vs_gbm"]
@@ -315,15 +347,20 @@ with tab_track:
     ]:
         by_hour = ev["segmented"]["by_hour"][m]
         hours = sorted(by_hour.keys(), key=int)
-        fig_hour.add_trace(go.Scatter(
-            x=[int(h) for h in hours],
-            y=[by_hour[h] for h in hours],
-            mode="lines+markers", name=lab,
-            line=dict(color=color),
-        ))
+        fig_hour.add_trace(
+            go.Scatter(
+                x=[int(h) for h in hours],
+                y=[by_hour[h] for h in hours],
+                mode="lines+markers",
+                name=lab,
+                line=dict(color=color),
+            )
+        )
     fig_hour.update_layout(
-        xaxis_title="Hour (UTC)", yaxis_title="Pinball Loss (EUR/MWh)",
-        height=350, margin=dict(t=20),
+        xaxis_title="Hour (UTC)",
+        yaxis_title="Pinball Loss (EUR/MWh)",
+        height=350,
+        margin=dict(t=20),
     )
     st.plotly_chart(fig_hour, use_container_width=True)
 
@@ -332,14 +369,16 @@ with tab_track:
     cal_rows = []
     for m, lab in [("gbm", "GBM"), ("lear", "LEAR"), ("climatology", "Climatology")]:
         c = ev["calibration"][m]
-        cal_rows.append({
-            "Model": lab,
-            "CRPS": f"{c['crps']:.1f}",
-            "MAE": f"{c['mae']:.1f}",
-            "RMSE": f"{c['rmse']:.1f}",
-            "Mean |Cal Error|": f"{c['mean_abs_cal_error']:.4f}",
-            "PIT CV": f"{c['pit_cv']:.3f}",
-        })
+        cal_rows.append(
+            {
+                "Model": lab,
+                "CRPS": f"{c['crps']:.1f}",
+                "MAE": f"{c['mae']:.1f}",
+                "RMSE": f"{c['rmse']:.1f}",
+                "Mean |Cal Error|": f"{c['mean_abs_cal_error']:.4f}",
+                "PIT CV": f"{c['pit_cv']:.3f}",
+            }
+        )
     st.dataframe(cal_rows, hide_index=True, use_container_width=True)
 
 # ── Tab 3: Backtest Explorer ──────────────────────────────────────────
@@ -354,7 +393,7 @@ with tab_backtest:
     batt = bt["battery"]
     st.markdown(
         f"**Battery:** {batt['power_mw']:.0f} MW / {batt['energy_mwh']:.0f} MWh, "
-        f"η = {batt['efficiency_charge']*100:.0f}% round-trip, "
+        f"η = {batt['efficiency_charge'] * 100:.0f}% round-trip, "
         f"degradation = EUR {batt['degradation_eur_per_mwh']}/MWh throughput. "
         f"**{bt['n_folds']} walk-forward folds**, {bt['n_test_isps']:,} ISPs."
     )
@@ -372,13 +411,15 @@ with tab_backtest:
     for p, lab in zip(pol_order, pol_labels, strict=True):
         d = bt["policies"][p]
         ci = bt["bootstrap_ci_95"].get(p)
-        ci_str = f"[{ci['lo']/1e3:.0f}K, {ci['hi']/1e3:.0f}K]" if ci else "—"
-        rev_rows.append({
-            "Policy": lab,
-            "Net Revenue (EUR)": f"{d['net_revenue_eur']:,.0f}",
-            "Ratio to PF": f"{d['ratio_to_pf']*100:.1f}%",
-            "95% CI": ci_str,
-        })
+        ci_str = f"[{ci['lo'] / 1e3:.0f}K, {ci['hi'] / 1e3:.0f}K]" if ci else "—"
+        rev_rows.append(
+            {
+                "Policy": lab,
+                "Net Revenue (EUR)": f"{d['net_revenue_eur']:,.0f}",
+                "Ratio to PF": f"{d['ratio_to_pf'] * 100:.1f}%",
+                "95% CI": ci_str,
+            }
+        )
     st.dataframe(rev_rows, hide_index=True, use_container_width=True)
 
     col1, col2 = st.columns(2)
@@ -398,20 +439,29 @@ with tab_backtest:
         cvar_vals = [f["cvar_5pct"] for f in frontier]
 
         fig_ef = go.Figure()
-        fig_ef.add_trace(go.Scatter(
-            x=cvar_vals, y=rev_vals,
-            mode="lines+markers+text",
-            text=[f"ra={r:.1f}" for r in ra_vals],
-            textposition="top center",
-            textfont=dict(size=9),
-            marker=dict(size=8, color=ra_vals, colorscale="RdYlGn_r", showscale=True,
-                        colorbar=dict(title="Risk<br>Aversion")),
-            line=dict(color="#888"),
-        ))
+        fig_ef.add_trace(
+            go.Scatter(
+                x=cvar_vals,
+                y=rev_vals,
+                mode="lines+markers+text",
+                text=[f"ra={r:.1f}" for r in ra_vals],
+                textposition="top center",
+                textfont=dict(size=9),
+                marker=dict(
+                    size=8,
+                    color=ra_vals,
+                    colorscale="RdYlGn_r",
+                    showscale=True,
+                    colorbar=dict(title="Risk<br>Aversion"),
+                ),
+                line=dict(color="#888"),
+            )
+        )
         fig_ef.update_layout(
             xaxis_title="CVaR 5% (EUR/ISP)",
             yaxis_title="Net Revenue (EUR K, last 3 months)",
-            height=450, margin=dict(t=20),
+            height=450,
+            margin=dict(t=20),
         )
         st.plotly_chart(fig_ef, use_container_width=True)
 
@@ -429,17 +479,21 @@ with tab_backtest:
         rpm_vals = [s["revenue_per_mw"] / 1e3 for s in sat if s["revenue_per_mw"] > 0]
 
         fig_sat = go.Figure()
-        fig_sat.add_trace(go.Scatter(
-            x=cap_vals, y=rpm_vals,
-            mode="lines+markers",
-            marker=dict(size=8, color="#1f77b4"),
-            line=dict(color="#1f77b4"),
-        ))
+        fig_sat.add_trace(
+            go.Scatter(
+                x=cap_vals,
+                y=rpm_vals,
+                mode="lines+markers",
+                marker=dict(size=8, color="#1f77b4"),
+                line=dict(color="#1f77b4"),
+            )
+        )
         fig_sat.update_layout(
             xaxis_title="Deployed Capacity (MW)",
             yaxis_title="Revenue per MW (EUR K)",
             xaxis_type="log",
-            height=450, margin=dict(t=20),
+            height=450,
+            margin=dict(t=20),
         )
         st.plotly_chart(fig_sat, use_container_width=True)
 
@@ -486,13 +540,15 @@ with tab_backtest:
         for p, lab in zip(ho_pol, ho_lab, strict=True):
             d = ho["dispatch"][p]
             ci = ho["bootstrap_ci_95"].get(p)
-            ci_str = f"[{ci['lo']/1e3:.0f}K, {ci['hi']/1e3:.0f}K]" if ci else "—"
-            ho_rows.append({
-                "Policy": lab,
-                "Net Revenue": f"EUR {d['net_revenue_eur']:,.0f}",
-                "Ratio to PF": f"{d['ratio_to_pf']*100:.1f}%",
-                "95% CI": ci_str,
-            })
+            ci_str = f"[{ci['lo'] / 1e3:.0f}K, {ci['hi'] / 1e3:.0f}K]" if ci else "—"
+            ho_rows.append(
+                {
+                    "Policy": lab,
+                    "Net Revenue": f"EUR {d['net_revenue_eur']:,.0f}",
+                    "Ratio to PF": f"{d['ratio_to_pf'] * 100:.1f}%",
+                    "95% CI": ci_str,
+                }
+            )
         st.dataframe(ho_rows, hide_index=True, use_container_width=True)
 
         n_wf_years = bt["n_test_isps"] * 0.25 / 8760
@@ -503,12 +559,14 @@ with tab_backtest:
             wf_ann = bt["policies"][p]["net_revenue_eur"] / n_wf_years
             ho_ann = ho["dispatch"][p]["net_revenue_eur"] / n_ho_years
             delta = ((ho_ann / wf_ann) - 1) * 100 if wf_ann != 0 else 0
-            comp_rows.append({
-                "Policy": lab,
-                "WF Annualised": f"EUR {wf_ann:,.0f}",
-                "Holdout Annualised": f"EUR {ho_ann:,.0f}",
-                "Delta": f"{delta:+.0f}%",
-            })
+            comp_rows.append(
+                {
+                    "Policy": lab,
+                    "WF Annualised": f"EUR {wf_ann:,.0f}",
+                    "Holdout Annualised": f"EUR {ho_ann:,.0f}",
+                    "Delta": f"{delta:+.0f}%",
+                }
+            )
         st.dataframe(comp_rows, hide_index=True, use_container_width=True)
         st.caption(
             "Holdout outperforms walk-forward on annualised basis. This likely "
@@ -581,17 +639,20 @@ with tab_whatif:
         m1, m2, m3 = st.columns(3)
         m1.metric("Battery", f"{power_mw:.0f} MW / {energy_mwh:.0f} MWh")
         m2.metric("Est. Annual Revenue", f"EUR {adjusted_ra:,.0f}")
-        m3.metric("Ratio to PF", f"{ratio_pf*100:.1f}%")
+        m3.metric("Ratio to PF", f"{ratio_pf * 100:.1f}%")
 
         fig_wi = go.Figure()
-        fig_wi.add_trace(go.Bar(
-            x=["Low (95% CI)", "Expected", "High (95% CI)"],
-            y=[adj_lo * ra_scale, adjusted_ra, adj_hi * ra_scale],
-            marker_color=["#ff7f7f", "#1f77b4", "#7fbf7f"],
-        ))
+        fig_wi.add_trace(
+            go.Bar(
+                x=["Low (95% CI)", "Expected", "High (95% CI)"],
+                y=[adj_lo * ra_scale, adjusted_ra, adj_hi * ra_scale],
+                marker_color=["#ff7f7f", "#1f77b4", "#7fbf7f"],
+            )
+        )
         fig_wi.update_layout(
             yaxis_title="Est. Annual Revenue (EUR)",
-            height=350, margin=dict(t=20),
+            height=350,
+            margin=dict(t=20),
         )
         st.plotly_chart(fig_wi, use_container_width=True)
 

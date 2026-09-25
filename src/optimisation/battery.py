@@ -126,7 +126,8 @@ def dispatch_cvar(
 
     for t in range(T):
         constraints.append(
-            soc[t + 1] == soc[t]
+            soc[t + 1]
+            == soc[t]
             + params.efficiency_charge * charge[t] * dt
             - (1.0 / params.efficiency_discharge) * discharge[t] * dt
         )
@@ -148,10 +149,7 @@ def dispatch_cvar(
     cvar = zeta - (1.0 / (alpha * n_scenarios)) * cp.sum(shortfall)
 
     objective = cp.Maximize(
-        (1.0 - risk_aversion) * expected_rev
-        + risk_aversion * cvar
-        - degradation
-        - terminal_cost
+        (1.0 - risk_aversion) * expected_rev + risk_aversion * cvar - degradation - terminal_cost
     )
 
     prob = cp.Problem(objective, constraints)
@@ -227,7 +225,8 @@ def _solve_lp(
 
     for t in range(T):
         constraints.append(
-            soc[t + 1] == soc[t]
+            soc[t + 1]
+            == soc[t]
             + params.efficiency_charge * charge[t] * dt
             - (1.0 / params.efficiency_discharge) * discharge[t] * dt
         )

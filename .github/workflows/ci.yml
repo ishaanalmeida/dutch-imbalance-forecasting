@@ -115,7 +115,7 @@ jobs:
           from src.data.data_availability import available_at, UnresolvedLagError
           isp = datetime(2026, 6, 17, 14, 30, tzinfo=timezone.utc)
           try:
-              available_at('balance_delta', isp)
+              available_at('activated_balancing_volumes', isp)
           except UnresolvedLagError:
               print('OK: unresolved lag refused.')
           else:

@@ -52,9 +52,7 @@ def test_gbm_learns_a_nonlinear_signal() -> None:
 
     persistence = PersistenceBaseline()
     persistence.fit(X_train, y_train)
-    pers_pinball = mean_pinball(
-        y_test, persistence.predict_quantiles(X_test, QUANTILES), QUANTILES
-    )
+    pers_pinball = mean_pinball(y_test, persistence.predict_quantiles(X_test, QUANTILES), QUANTILES)
 
     assert gbm_pinball < pers_pinball
 

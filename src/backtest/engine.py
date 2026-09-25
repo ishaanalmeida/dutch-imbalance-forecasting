@@ -101,15 +101,17 @@ def run_backtest_perfect_foresight(
         rev = net * price_arr[t]
         total_rev += rev
         ts = prices.index[t]
-        isps.append(ISPResult(
-            timestamp=ts.to_pydatetime() if hasattr(ts, "to_pydatetime") else ts,
-            price_short=price_arr[t],
-            charge_mw=result.charge_mw[t],
-            discharge_mw=result.discharge_mw[t],
-            soc_mwh=result.soc_mwh[t],
-            net_position_mwh=net,
-            revenue_eur=rev,
-        ))
+        isps.append(
+            ISPResult(
+                timestamp=ts.to_pydatetime() if hasattr(ts, "to_pydatetime") else ts,
+                price_short=price_arr[t],
+                charge_mw=result.charge_mw[t],
+                discharge_mw=result.discharge_mw[t],
+                soc_mwh=result.soc_mwh[t],
+                net_position_mwh=net,
+                revenue_eur=rev,
+            )
+        )
 
     return BacktestResult(
         isps=isps,
@@ -140,15 +142,17 @@ def run_backtest_deterministic(
         rev = net * price_arr[t]
         total_rev += rev
         ts = prices.index[t]
-        isps.append(ISPResult(
-            timestamp=ts.to_pydatetime() if hasattr(ts, "to_pydatetime") else ts,
-            price_short=price_arr[t],
-            charge_mw=result.charge_mw[t],
-            discharge_mw=result.discharge_mw[t],
-            soc_mwh=result.soc_mwh[t],
-            net_position_mwh=net,
-            revenue_eur=rev,
-        ))
+        isps.append(
+            ISPResult(
+                timestamp=ts.to_pydatetime() if hasattr(ts, "to_pydatetime") else ts,
+                price_short=price_arr[t],
+                charge_mw=result.charge_mw[t],
+                discharge_mw=result.discharge_mw[t],
+                soc_mwh=result.soc_mwh[t],
+                net_position_mwh=net,
+                revenue_eur=rev,
+            )
+        )
 
     return BacktestResult(
         isps=isps,
@@ -170,15 +174,17 @@ def run_backtest_do_nothing(
     isps = []
     for t in range(T):
         ts = prices.index[t]
-        isps.append(ISPResult(
-            timestamp=ts.to_pydatetime() if hasattr(ts, "to_pydatetime") else ts,
-            price_short=float(prices.iloc[t]),
-            charge_mw=0.0,
-            discharge_mw=0.0,
-            soc_mwh=soc,
-            net_position_mwh=0.0,
-            revenue_eur=0.0,
-        ))
+        isps.append(
+            ISPResult(
+                timestamp=ts.to_pydatetime() if hasattr(ts, "to_pydatetime") else ts,
+                price_short=float(prices.iloc[t]),
+                charge_mw=0.0,
+                discharge_mw=0.0,
+                soc_mwh=soc,
+                net_position_mwh=0.0,
+                revenue_eur=0.0,
+            )
+        )
     return BacktestResult(
         isps=isps,
         total_revenue_eur=0.0,
@@ -208,9 +214,7 @@ def block_bootstrap_ci(
     boot_totals = np.empty(n_bootstrap)
     for b in range(n_bootstrap):
         starts = rng.integers(0, T - block_size + 1, size=n_blocks)
-        sample = np.concatenate(
-            [revenues[s: s + block_size] for s in starts]
-        )[:T]
+        sample = np.concatenate([revenues[s : s + block_size] for s in starts])[:T]
         boot_totals[b] = sample.sum()
 
     lo = float(np.percentile(boot_totals, 100 * alpha / 2))

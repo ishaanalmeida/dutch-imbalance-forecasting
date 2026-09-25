@@ -91,13 +91,9 @@ def test_seasonal_naive_works_on_a_disjoint_test_index() -> None:
     implementation shifted the stored training target and reindexed onto the
     test index, and a disjoint index never overlaps its own shift."""
     train_idx = pd.date_range("2025-01-01", periods=96, freq="15min", tz="UTC")
-    X_train = pd.DataFrame(
-        {"lag_price_short_96": np.arange(96, dtype=float)}, index=train_idx
-    )
+    X_train = pd.DataFrame({"lag_price_short_96": np.arange(96, dtype=float)}, index=train_idx)
     test_idx = pd.date_range("2025-02-01", periods=10, freq="15min", tz="UTC")
-    X_test = pd.DataFrame(
-        {"lag_price_short_96": np.arange(100, 110, dtype=float)}, index=test_idx
-    )
+    X_test = pd.DataFrame({"lag_price_short_96": np.arange(100, 110, dtype=float)}, index=test_idx)
 
     model = SeasonalNaiveBaseline(period_isps=96)
     model.fit(X_train, pd.Series(np.zeros(len(X_train)), index=X_train.index))
