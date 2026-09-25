@@ -15,6 +15,8 @@ from __future__ import annotations
 # ruff: noqa: I001 — cvxpy MUST load before pandas (Windows osqp DLL conflict)
 import cvxpy as cp  # noqa: F401
 import json
+from collections.abc import Callable
+from typing import Any
 from pathlib import Path
 
 import numpy as np
@@ -60,7 +62,7 @@ from src.optimisation.battery import (
 
 RESULTS_DIR = Path("work/holdout")
 
-MODEL_FACTORIES: dict[str, type[QuantileModel] | object] = {
+MODEL_FACTORIES: dict[str, Callable[[], QuantileModel]] = {
     "persistence": PersistenceBaseline,
     "seasonal_naive_1w": lambda: SeasonalNaiveBaseline(period_isps=672),
     "climatology": ClimatologyBaseline,
@@ -76,7 +78,7 @@ def _resample_day_ahead(
     return day_ahead_raw.reindex(isp_index, method="ffill")
 
 
-def _calibration(y: FloatArray, pred: FloatArray) -> dict:
+def _calibration(y: FloatArray, pred: FloatArray) -> dict[str, Any]:
     coverage = empirical_coverage(y, pred, QUANTILES)
     taus = np.asarray(QUANTILES)
     cal_error = np.abs(coverage - taus)
@@ -321,12 +323,12 @@ def main() -> None:
     print("=" * 50)
 
     y_hold_arr = y_hold.to_numpy()
-    forecast_results: dict[str, dict] = {}
+    forecast_results: dict[str, dict[str, Any]] = {}
     all_preds: dict[str, FloatArray] = {}
     per_obs: dict[str, FloatArray] = {}
 
     for name, factory in MODEL_FACTORIES.items():
-        model = factory() if callable(factory) else factory
+        model = factory()
         model.fit(X_train, y_train)
         pred = model.predict_quantiles(X_hold, QUANTILES)
 
