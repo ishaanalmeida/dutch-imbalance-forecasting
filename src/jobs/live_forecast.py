@@ -14,19 +14,22 @@ Each run:
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
 
 from src.data import cache
+from src.data.timebase import ISP_MINUTES
 from src.evaluation.metrics import QUANTILES
 from src.features.builder import build_features
 from src.features.targets import PICASSO_START, build_targets
 from src.models.gbm import QuantileGBM
+from src.models.lear import FEATURE_COLUMNS
 
 LOG_DIR = Path("forecast_log")
 LOG_FILE = LOG_DIR / "forecasts.jsonl"
+N_AHEAD = 8
 
 
 def _regulation_state_probs(quantiles: dict[str, float]) -> dict[str, float]:
@@ -77,44 +80,59 @@ def main() -> None:
     LOG_DIR.mkdir(exist_ok=True)
     run_ts = datetime.now(UTC)
 
-    end = run_ts
-    prices = cache.read_frame("imbalance_prices", PICASSO_START, end)
+    prices = cache.read_frame("imbalance_prices", PICASSO_START, run_ts)
     if prices.empty:
         print("No cached price data available. Run data fetchers first.")
         return
 
-    da_cached = cache.read_frame("day_ahead_price", PICASSO_START, end)
+    # Targets are the next N_AHEAD ISPs that start after this run, not the ISP
+    # after the last cached price: settled prices publish in daily batches, so
+    # that ISP is hours in the past and identical for every run of the day.
+    step = f"{ISP_MINUTES}min"
+    targets_idx = pd.date_range(pd.Timestamp(run_ts).ceil(step), periods=N_AHEAD, freq=step)
+    grid = pd.date_range(prices.index[0], targets_idx[-1], freq=step)
+    prices_ext = prices.reindex(grid)  # NaN = not yet published; features mask/propagate it
+
+    # Day-ahead for the target ISPs is already published (D-1 13:00, market_rules.yaml),
+    # so read through the last target, not just up to run_ts.
+    da_end = targets_idx[-1].to_pydatetime() + timedelta(minutes=ISP_MINUTES)
+    da_cached = cache.read_frame("day_ahead_price", PICASSO_START, da_end)
     if da_cached.empty or "day_ahead_price" not in da_cached.columns:
         print("No day-ahead price data. Run data fetchers first.")
         return
-
     da_raw = da_cached["day_ahead_price"]
-    da = da_raw.reindex(pd.DatetimeIndex(prices.index), method="ffill")
+    # ffill bridges the pre-2025-10 hourly DA onto the 15-min grid; target rows
+    # take exact values only, so a missing auction result is NaN, never a stale carry.
+    da = da_raw.reindex(grid, method="ffill")
+    da.loc[targets_idx] = da_raw.reindex(targets_idx)
 
-    X = build_features(prices, day_ahead=da)
-    targets = build_targets(prices)
-    y = targets["price_short"]
+    X = build_features(prices_ext, day_ahead=da)
+    X_train = X.loc[prices.index]
+    y = build_targets(prices)["price_short"]
 
-    if len(X) < 1000:
-        print(f"Only {len(X)} ISPs available — need at least 1000 for training.")
+    if len(X_train) < 1000:
+        print(f"Only {len(X_train)} ISPs available — need at least 1000 for training.")
         return
 
-    print(f"Training GBM on {len(X)} ISPs...")
+    print(f"Training GBM on {len(X_train)} ISPs...")
     model = QuantileGBM()
-    model.fit(X, y)
+    model.fit(X_train, y)
 
-    last_idx = X.index[-1]
-    forecast_start = last_idx + pd.Timedelta(minutes=15)
-    n_ahead = 8
-    print(f"Forecasting {n_ahead} ISPs from {forecast_start}")
+    X_next = X.loc[targets_idx, list(FEATURE_COLUMNS)]
+    skipped = X_next.index[X_next.isna().any(axis=1)]
+    if len(skipped):
+        print(f"Skipping {len(skipped)} ISPs with unpublished inputs: {list(skipped)}")
+    X_next = X_next.drop(skipped)
+    if X_next.empty:
+        print("No target ISP has complete features — nothing logged.")
+        return
+    print(f"Forecasting {len(X_next)} ISPs from {X_next.index[0]}")
 
-    last_row = X.iloc[-1:]
-    q_pred = model.predict_quantiles(last_row, QUANTILES)
+    q_pred = model.predict_quantiles(X_next, QUANTILES)
 
     taus = list(QUANTILES)
     forecasts = []
-    for i in range(min(n_ahead, len(q_pred))):
-        isp_ts = forecast_start + pd.Timedelta(minutes=15 * i)
+    for i, isp_ts in enumerate(X_next.index):
         quantile_dict = {f"{t:.2f}": float(q_pred[i][j]) for j, t in enumerate(taus)}
         reg_state = _regulation_state_probs(quantile_dict)
         dispatch = _dispatch_recommendation(quantile_dict)
@@ -133,7 +151,7 @@ def main() -> None:
             f.write(json.dumps(fc, default=str) + "\n")
 
     print(f"Logged {len(forecasts)} forecasts to {LOG_FILE}")
-    print(f"  Latest ISP: {last_idx}")
+    print(f"  Latest settled ISP: {prices.index[-1]}")
     print(f"  Median forecast: EUR {forecasts[0]['median']:.1f}/MWh")
     print(f"  Regulation state: {forecasts[0]['regulation_state']}")
     print(f"  Dispatch: {forecasts[0]['dispatch_recommendation']}")

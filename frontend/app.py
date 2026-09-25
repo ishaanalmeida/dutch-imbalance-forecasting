@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -89,18 +90,29 @@ def load_holdout() -> dict | None:
     return None
 
 
-@st.cache_data
+@st.cache_data(ttl=300)  # the cron appends to this file; don't pin the first read forever
 def load_forecast_log() -> list[dict]:
-    if FORECAST_LOG.exists():
-        entries = []
-        for line in FORECAST_LOG.read_text().strip().split("\n"):
-            if line.strip():
-                try:
-                    entries.append(json.loads(line))
-                except json.JSONDecodeError:
-                    logger.warning("Skipping malformed forecast log line: %s", line[:80])
-        return entries
-    return []
+    """Ex-ante forecasts only, latest issue per target ISP, ordered by target.
+
+    Entries issued after their target ISP began are hindcasts (the pre-fix job
+    logged these) and never count as live forecasts."""
+    if not FORECAST_LOG.exists():
+        return []
+    latest: dict[str, dict] = {}
+    for line in FORECAST_LOG.read_text().strip().split("\n"):
+        if not line.strip():
+            continue
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            logger.warning("Skipping malformed forecast log line: %s", line[:80])
+            continue
+        if datetime.fromisoformat(entry["forecast_issued_at"]) > datetime.fromisoformat(
+            entry["target_isp"]
+        ):
+            continue
+        latest[entry["target_isp"]] = entry  # file is append-ordered, so later wins
+    return sorted(latest.values(), key=lambda e: datetime.fromisoformat(e["target_isp"]))
 
 
 @st.cache_data
@@ -129,8 +141,11 @@ with tab_forecast:
         "evidence that the model works out-of-sample."
     )
     if fc_log:
-        latest = fc_log[-1]
-        st.markdown(f"**Last forecast issued:** {latest['forecast_issued_at']}")
+        last_issue = max(e["forecast_issued_at"] for e in fc_log)
+        latest = next(e for e in fc_log if e["forecast_issued_at"] == last_issue)
+        st.markdown(
+            f"**Last forecast issued:** {last_issue} · **next ISP:** {latest['target_isp']}"
+        )
 
         col_m, col_r, col_d = st.columns(3)
         col_m.metric("Median forecast (next ISP)", f"EUR {latest['median']:.1f}/MWh")

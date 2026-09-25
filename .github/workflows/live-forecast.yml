@@ -43,7 +43,9 @@ jobs:
         run: |
           set -euo pipefail
           START=$(date -u -d "90 days ago" +%Y-%m-%d)
-          END=$(date -u +%Y-%m-%d)
+          # END is exclusive: +2 days pulls today's and tomorrow's day-ahead
+          # prices (published D-1), which the next-ISP features need.
+          END=$(date -u -d "2 days" +%Y-%m-%d)
           echo "Fetching $START to $END"
           uv run python -m scripts.backfill_history both "$START" "$END"
 
