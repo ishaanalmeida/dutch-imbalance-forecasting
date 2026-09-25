@@ -70,9 +70,7 @@ def _slice(frame: _F, start: datetime, end: datetime) -> _F:
     return frame[(frame.index >= start) & (frame.index < end)]
 
 
-def _calibration_report(
-    y_all: FloatArray, pred_all: FloatArray, label: str
-) -> dict[str, object]:
+def _calibration_report(y_all: FloatArray, pred_all: FloatArray, label: str) -> dict[str, object]:
     """Compute calibration metrics for one model's pooled predictions."""
     coverage = empirical_coverage(y_all, pred_all, QUANTILES)
     taus = np.asarray(QUANTILES)
@@ -108,9 +106,7 @@ def _calibration_report(
         "crps": float(crps_from_quantiles(y_all, pred_all, QUANTILES)),
         "mae": point_mae,
         "rmse": point_rmse,
-        "coverage": {
-            f"{t:.2f}": float(c) for t, c in zip(taus, coverage, strict=True)
-        },
+        "coverage": {f"{t:.2f}": float(c) for t, c in zip(taus, coverage, strict=True)},
         "pit_histogram": pit_hist.tolist(),
     }
 
@@ -141,9 +137,7 @@ def _segmented_report(
         "by_season": season_keys,
     }
     if is_dual is not None:
-        segments["by_dual_priced"] = pd.Index(
-            [str(v) for v in is_dual.reindex(idx).to_numpy()]
-        )
+        segments["by_dual_priced"] = pd.Index([str(v) for v in is_dual.reindex(idx).to_numpy()])
 
     for seg_name, seg_keys in segments.items():
         unique_keys = sorted(set(seg_keys))
@@ -156,9 +150,7 @@ def _segmented_report(
                     continue
                 y_seg = y_series.to_numpy()[mask]
                 p_seg = pred[mask]
-                model_seg[str(k)] = float(
-                    mean_pinball(y_seg, p_seg, QUANTILES)
-                )
+                model_seg[str(k)] = float(mean_pinball(y_seg, p_seg, QUANTILES))
             seg_result[model_name] = model_seg
         results[seg_name] = seg_result
 
@@ -210,9 +202,7 @@ def _segmented_report(
     return results
 
 
-def _filter_nan_predictions(
-    y: FloatArray, pred: FloatArray
-) -> tuple[FloatArray, FloatArray, int]:
+def _filter_nan_predictions(y: FloatArray, pred: FloatArray) -> tuple[FloatArray, FloatArray, int]:
     """Drop rows where the prediction is NaN (e.g. seasonal naive with
     unavailable lags). Returns (y_clean, pred_clean, n_dropped)."""
     valid = ~np.isnan(pred).any(axis=1)
@@ -252,13 +242,9 @@ def _permutation_importance(
 
 def main() -> int:
     prices = cache.read_frame("imbalance_prices", PICASSO_START, HOLDOUT_START)
-    day_ahead_cached = cache.read_frame(
-        "day_ahead_price", PICASSO_START, HOLDOUT_START
-    )
+    day_ahead_cached = cache.read_frame("day_ahead_price", PICASSO_START, HOLDOUT_START)
     day_ahead_raw = day_ahead_cached["day_ahead_price"]
-    day_ahead = _resample_day_ahead(
-        day_ahead_raw, pd.DatetimeIndex(prices.index)
-    )
+    day_ahead = _resample_day_ahead(day_ahead_raw, pd.DatetimeIndex(prices.index))
 
     X = build_features(prices, day_ahead=day_ahead)
     targets = build_targets(prices)
@@ -360,9 +346,7 @@ def main() -> int:
             print(f"{name:18s}  SKIP ({n_m} vs {n_r})")
             continue
         max_lag = int(np.floor(len(model_concat) ** (1.0 / 3.0)))
-        dm_stat, p_val = diebold_mariano(
-            model_concat, ref_concat, max_lag=max_lag
-        )
+        dm_stat, p_val = diebold_mariano(model_concat, ref_concat, max_lag=max_lag)
         dm_results.append((name, dm_stat, p_val))
         raw_pvalues.append((name, p_val))
         print(f"{name:18s} {dm_stat:10.4f} {p_val:10.6f} {len(model_concat):8d}")
@@ -433,18 +417,29 @@ def main() -> int:
             last_fold = folds[-1]
             X_test_last = _slice(X, last_fold.test_start, last_fold.test_end)
             y_test_last = _slice(y, last_fold.test_start, last_fold.test_end).to_numpy()
-            complete = X_test_last[list(
-                ("lag_price_short_freshest", "lag_price_short_672",
-                 "hour_sin", "hour_cos", "dow_sin", "dow_cos", "day_ahead_price")
-            )].notna().all(axis=1)
+            complete = (
+                X_test_last[
+                    list(
+                        (
+                            "lag_price_short_freshest",
+                            "lag_price_short_672",
+                            "hour_sin",
+                            "hour_cos",
+                            "dow_sin",
+                            "dow_cos",
+                            "day_ahead_price",
+                        )
+                    )
+                ]
+                .notna()
+                .all(axis=1)
+            )
             X_test_clean = X_test_last[complete]
             y_test_clean = y_test_last[complete.to_numpy()]
             if len(X_test_clean) > 0:
                 n_imp = len(X_test_clean)
                 print(f"\n=== Permutation importance: {model_name} (last fold, n={n_imp}) ===")
-                imp = _permutation_importance(
-                    last_models[model_name], X_test_clean, y_test_clean
-                )
+                imp = _permutation_importance(last_models[model_name], X_test_clean, y_test_clean)
                 importance_results[model_name] = imp
                 for feat, delta in sorted(imp.items(), key=lambda x: -x[1]):
                     print(f"  {feat:30s} {delta:+.4f} EUR/MWh")
@@ -470,13 +465,11 @@ def main() -> int:
             if v
         },
         "dm_tests_vs_reference": [
-            {"model": n, "dm_stat": d, "p_value": p}
-            for n, d, p in dm_results
+            {"model": n, "dm_stat": d, "p_value": p} for n, d, p in dm_results
         ],
         "dm_lear_vs_gbm": dm_lear_gbm,
         "holm_bonferroni": [
-            {"model": lb, "adj_p_value": ap, "significant_005": sg}
-            for lb, ap, sg in corrected
+            {"model": lb, "adj_p_value": ap, "significant_005": sg} for lb, ap, sg in corrected
         ],
         "calibration": calibration,
         "segmented": segmented,

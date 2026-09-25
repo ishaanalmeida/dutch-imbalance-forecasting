@@ -53,7 +53,9 @@ def _resample_day_ahead(
 
 
 def _slice(
-    frame: pd.DataFrame | pd.Series[float], start: datetime, end: datetime,
+    frame: pd.DataFrame | pd.Series[float],
+    start: datetime,
+    end: datetime,
 ) -> pd.DataFrame | pd.Series[float]:
     return frame[(frame.index >= start) & (frame.index < end)]
 
@@ -92,7 +94,9 @@ def generate_scenarios(
     for i in range(n_scenarios):
         u_base = (i + 0.5) / n_scenarios
         u_per_isp = np.clip(
-            u_base + rng.normal(0, 0.03, T), 0.01, 0.99,
+            u_base + rng.normal(0, 0.03, T),
+            0.01,
+            0.99,
         )
         for t in range(T):
             scenarios[i, t] = np.interp(u_per_isp[t], taus, q_pred[t])
@@ -146,8 +150,8 @@ def rolling_dispatch_deterministic(
         result = dispatch_deterministic(median_forecast[t:end], current_params)
         execute = min(step, n_window)
 
-        charge_all[t:t + execute] = result.charge_mw[:execute]
-        discharge_all[t:t + execute] = result.discharge_mw[:execute]
+        charge_all[t : t + execute] = result.charge_mw[:execute]
+        discharge_all[t : t + execute] = result.discharge_mw[:execute]
 
         for k in range(execute):
             soc_all[t + k + 1] = (
@@ -220,8 +224,8 @@ def rolling_dispatch_cvar(
         result = dispatch_cvar(scenarios, current_params, alpha=alpha, risk_aversion=risk_aversion)
         execute = min(step, n_window)
 
-        charge_all[t:t + execute] = result.charge_mw[:execute]
-        discharge_all[t:t + execute] = result.discharge_mw[:execute]
+        charge_all[t : t + execute] = result.charge_mw[:execute]
+        discharge_all[t : t + execute] = result.discharge_mw[:execute]
 
         for k in range(execute):
             soc_all[t + k + 1] = (
@@ -288,15 +292,17 @@ def _to_isp_results(
         net = (dispatch.discharge_mw[t] - dispatch.charge_mw[t]) * dt
         rev = net * prices_arr[t]
         ts = prices_series.index[t]
-        results.append(ISPResult(
-            timestamp=ts.to_pydatetime() if hasattr(ts, "to_pydatetime") else ts,
-            price_short=prices_arr[t],
-            charge_mw=dispatch.charge_mw[t],
-            discharge_mw=dispatch.discharge_mw[t],
-            soc_mwh=dispatch.soc_mwh[t],
-            net_position_mwh=net,
-            revenue_eur=rev,
-        ))
+        results.append(
+            ISPResult(
+                timestamp=ts.to_pydatetime() if hasattr(ts, "to_pydatetime") else ts,
+                price_short=prices_arr[t],
+                charge_mw=dispatch.charge_mw[t],
+                discharge_mw=dispatch.discharge_mw[t],
+                soc_mwh=dispatch.soc_mwh[t],
+                net_position_mwh=net,
+                revenue_eur=rev,
+            )
+        )
     return results
 
 
@@ -387,7 +393,11 @@ def main() -> None:
     # ── Policy 2: Deterministic (median forecast) ────────────────────
     print("\nRunning deterministic (rolling horizon)...")
     det_dispatch = rolling_dispatch_deterministic(
-        prices_arr, median_concat, battery, window=32, step=16,
+        prices_arr,
+        median_concat,
+        battery,
+        window=32,
+        step=16,
     )
     det_result = _dispatch_to_backtest_result(prices_concat, det_dispatch, "deterministic", dt)
     print(f"  Net revenue: EUR {det_result.net_revenue_eur:,.0f}")
@@ -395,8 +405,14 @@ def main() -> None:
     # ── Policy 3: CVaR (risk_aversion=0.5) ───────────────────────────
     print("\nRunning CVaR (risk_aversion=0.5, rolling horizon)...")
     cvar_dispatch = rolling_dispatch_cvar(
-        prices_arr, q_concat, QUANTILES, battery,
-        risk_aversion=0.5, n_scenarios=20, window=32, step=16,
+        prices_arr,
+        q_concat,
+        QUANTILES,
+        battery,
+        risk_aversion=0.5,
+        n_scenarios=20,
+        window=32,
+        step=16,
     )
     cvar_result = _dispatch_to_backtest_result(prices_concat, cvar_dispatch, "cvar_0.5", dt)
     print(f"  Net revenue: EUR {cvar_result.net_revenue_eur:,.0f}")
@@ -428,7 +444,7 @@ def main() -> None:
     yearly: dict[str, dict[str, float]] = {}
     for name, r in policies.items():
         df = r.to_dataframe()
-        df.index = idx_concat[:len(df)]
+        df.index = idx_concat[: len(df)]
         yearly[name] = {}
         for year_val in sorted(df.index.year.unique()):
             mask = df.index.year == year_val
@@ -471,8 +487,14 @@ def main() -> None:
 
     for ra in risk_aversions:
         disp = rolling_dispatch_cvar(
-            frontier_prices, frontier_q, QUANTILES, battery,
-            risk_aversion=ra, n_scenarios=20, window=32, step=16,
+            frontier_prices,
+            frontier_q,
+            QUANTILES,
+            battery,
+            risk_aversion=ra,
+            n_scenarios=20,
+            window=32,
+            step=16,
             seed=42,
         )
         net_pos = (disp.discharge_mw - disp.charge_mw) * dt
@@ -480,12 +502,14 @@ def main() -> None:
         total_rev = float(rev_per_isp.sum()) - disp.degradation_cost_eur
         cvar_05 = float(np.percentile(rev_per_isp, 5))
         std_rev = float(rev_per_isp.std())
-        frontier.append({
-            "risk_aversion": ra,
-            "net_revenue": total_rev,
-            "cvar_5pct": cvar_05,
-            "std_daily_revenue": std_rev * np.sqrt(96),
-        })
+        frontier.append(
+            {
+                "risk_aversion": ra,
+                "net_revenue": total_rev,
+                "cvar_5pct": cvar_05,
+                "std_daily_revenue": std_rev * np.sqrt(96),
+            }
+        )
         print(f"  ra={ra:.1f}  net_rev={total_rev:>10,.0f}  CVaR5={cvar_05:>8,.1f}")
 
     # ── Revenue-per-MW saturation curve ──────────────────────────────
@@ -497,18 +521,24 @@ def main() -> None:
 
     for cap in capacities:
         impacted = apply_market_impact(
-            det_rev_per_isp, det_net_per_isp, None, cap, ref_capacity_mw=500.0,
+            det_rev_per_isp,
+            det_net_per_isp,
+            None,
+            cap,
+            ref_capacity_mw=500.0,
         )
         scale = cap / battery.power_mw
         total_impacted = float(impacted.sum()) * scale
         deg_scaled = det_result.total_degradation_eur * scale
         net = total_impacted - deg_scaled
         rev_per_mw = net / cap if cap > 0 else 0
-        saturation.append({
-            "capacity_mw": float(cap),
-            "total_net_revenue": net,
-            "revenue_per_mw": rev_per_mw,
-        })
+        saturation.append(
+            {
+                "capacity_mw": float(cap),
+                "total_net_revenue": net,
+                "revenue_per_mw": rev_per_mw,
+            }
+        )
         print(f"  {cap:>4d} MW:  EUR {net:>12,.0f}  ({rev_per_mw:>8,.0f}/MW)")
 
     # ── Save results ─────────────────────────────────────────────────

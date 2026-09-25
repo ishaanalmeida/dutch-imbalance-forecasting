@@ -58,16 +58,12 @@ class QuantileGBM:
         self._models = {}
         self._fitted = True
 
-    def predict_quantiles(
-        self, X: pd.DataFrame, quantiles: tuple[float, ...]
-    ) -> FloatArray:
+    def predict_quantiles(self, X: pd.DataFrame, quantiles: tuple[float, ...]) -> FloatArray:
         if not self._fitted:
             raise RuntimeError("QuantileGBM used before fit()")
         frame = X[list(FEATURE_COLUMNS)]
         if bool(frame.isna().any().any()):
-            raise ValueError(
-                "QuantileGBM cannot predict with missing features"
-            )
+            raise ValueError("QuantileGBM cannot predict with missing features")
         for tau in quantiles:
             if tau not in self._models:
                 model = lgb.LGBMRegressor(

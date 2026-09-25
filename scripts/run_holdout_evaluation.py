@@ -100,8 +100,10 @@ def _calibration(y: FloatArray, pred: FloatArray) -> dict:
 
 
 def generate_scenarios(
-    q_pred: FloatArray, quantiles: tuple[float, ...],
-    n_scenarios: int, rng: np.random.Generator,
+    q_pred: FloatArray,
+    quantiles: tuple[float, ...],
+    n_scenarios: int,
+    rng: np.random.Generator,
 ) -> FloatArray:
     T, _ = q_pred.shape
     taus = np.asarray(quantiles)
@@ -118,8 +120,11 @@ def generate_scenarios(
 
 
 def rolling_dispatch_deterministic(
-    prices: FloatArray, median_forecast: FloatArray,
-    params: BatteryParams, window: int = 32, step: int = 16,
+    prices: FloatArray,
+    median_forecast: FloatArray,
+    params: BatteryParams,
+    window: int = 32,
+    step: int = 16,
 ) -> DispatchResult:
     T = len(prices)
     charge_all = np.zeros(T)
@@ -133,10 +138,12 @@ def rolling_dispatch_deterministic(
         end = min(t + window, T)
         n_window = end - t
         cp_ = BatteryParams(
-            power_mw=params.power_mw, energy_mwh=params.energy_mwh,
+            power_mw=params.power_mw,
+            energy_mwh=params.energy_mwh,
             efficiency_charge=params.efficiency_charge,
             efficiency_discharge=params.efficiency_discharge,
-            soc_min=params.soc_min, soc_max=params.soc_max,
+            soc_min=params.soc_min,
+            soc_max=params.soc_max,
             soc_initial=soc_all[t] / params.energy_mwh,
             soc_target=params.soc_target,
             degradation_eur_per_mwh=params.degradation_eur_per_mwh,
@@ -145,8 +152,8 @@ def rolling_dispatch_deterministic(
         )
         result = dispatch_deterministic(median_forecast[t:end], cp_)
         execute = min(step, n_window)
-        charge_all[t:t + execute] = result.charge_mw[:execute]
-        discharge_all[t:t + execute] = result.discharge_mw[:execute]
+        charge_all[t : t + execute] = result.charge_mw[:execute]
+        discharge_all[t : t + execute] = result.discharge_mw[:execute]
         for k in range(execute):
             soc_all[t + k + 1] = (
                 soc_all[t + k]
@@ -159,16 +166,27 @@ def rolling_dispatch_deterministic(
     gross = float(np.sum(net_pos * prices))
     deg = total_throughput * params.degradation_eur_per_mwh
     return DispatchResult(
-        charge_mw=charge_all, discharge_mw=discharge_all, soc_mwh=soc_all,
-        revenue_eur=gross, degradation_cost_eur=deg, net_revenue_eur=gross - deg,
+        charge_mw=charge_all,
+        discharge_mw=discharge_all,
+        soc_mwh=soc_all,
+        revenue_eur=gross,
+        degradation_cost_eur=deg,
+        net_revenue_eur=gross - deg,
         status="rolling_optimal",
     )
 
 
 def rolling_dispatch_cvar(
-    prices: FloatArray, q_pred: FloatArray, quantiles: tuple[float, ...],
-    params: BatteryParams, risk_aversion: float = 0.5, alpha: float = 0.05,
-    n_scenarios: int = 20, window: int = 32, step: int = 16, seed: int = 42,
+    prices: FloatArray,
+    q_pred: FloatArray,
+    quantiles: tuple[float, ...],
+    params: BatteryParams,
+    risk_aversion: float = 0.5,
+    alpha: float = 0.05,
+    n_scenarios: int = 20,
+    window: int = 32,
+    step: int = 16,
+    seed: int = 42,
 ) -> DispatchResult:
     T = len(prices)
     rng = np.random.default_rng(seed)
@@ -183,10 +201,12 @@ def rolling_dispatch_cvar(
         end = min(t + window, T)
         n_window = end - t
         cp_ = BatteryParams(
-            power_mw=params.power_mw, energy_mwh=params.energy_mwh,
+            power_mw=params.power_mw,
+            energy_mwh=params.energy_mwh,
             efficiency_charge=params.efficiency_charge,
             efficiency_discharge=params.efficiency_discharge,
-            soc_min=params.soc_min, soc_max=params.soc_max,
+            soc_min=params.soc_min,
+            soc_max=params.soc_max,
             soc_initial=soc_all[t] / params.energy_mwh,
             soc_target=params.soc_target,
             degradation_eur_per_mwh=params.degradation_eur_per_mwh,
@@ -197,8 +217,8 @@ def rolling_dispatch_cvar(
         scenarios = generate_scenarios(q_window, quantiles, n_scenarios, rng)
         result = dispatch_cvar(scenarios, cp_, alpha=alpha, risk_aversion=risk_aversion)
         execute = min(step, n_window)
-        charge_all[t:t + execute] = result.charge_mw[:execute]
-        discharge_all[t:t + execute] = result.discharge_mw[:execute]
+        charge_all[t : t + execute] = result.charge_mw[:execute]
+        discharge_all[t : t + execute] = result.discharge_mw[:execute]
         for k in range(execute):
             soc_all[t + k + 1] = (
                 soc_all[t + k]
@@ -211,14 +231,20 @@ def rolling_dispatch_cvar(
     gross = float(np.sum(net_pos * prices))
     deg = total_throughput * params.degradation_eur_per_mwh
     return DispatchResult(
-        charge_mw=charge_all, discharge_mw=discharge_all, soc_mwh=soc_all,
-        revenue_eur=gross, degradation_cost_eur=deg, net_revenue_eur=gross - deg,
+        charge_mw=charge_all,
+        discharge_mw=discharge_all,
+        soc_mwh=soc_all,
+        revenue_eur=gross,
+        degradation_cost_eur=deg,
+        net_revenue_eur=gross - deg,
         status="rolling_cvar",
     )
 
 
 def _to_isp_results(
-    prices_series: pd.Series[float], dispatch: DispatchResult, dt: float,
+    prices_series: pd.Series[float],
+    dispatch: DispatchResult,
+    dt: float,
 ) -> list[ISPResult]:
     prices_arr = prices_series.to_numpy(dtype=float)
     results = []
@@ -226,27 +252,36 @@ def _to_isp_results(
         net = (dispatch.discharge_mw[t] - dispatch.charge_mw[t]) * dt
         rev = net * prices_arr[t]
         ts = prices_series.index[t]
-        results.append(ISPResult(
-            timestamp=ts.to_pydatetime() if hasattr(ts, "to_pydatetime") else ts,
-            price_short=prices_arr[t], charge_mw=dispatch.charge_mw[t],
-            discharge_mw=dispatch.discharge_mw[t], soc_mwh=dispatch.soc_mwh[t],
-            net_position_mwh=net, revenue_eur=rev,
-        ))
+        results.append(
+            ISPResult(
+                timestamp=ts.to_pydatetime() if hasattr(ts, "to_pydatetime") else ts,
+                price_short=prices_arr[t],
+                charge_mw=dispatch.charge_mw[t],
+                discharge_mw=dispatch.discharge_mw[t],
+                soc_mwh=dispatch.soc_mwh[t],
+                net_position_mwh=net,
+                revenue_eur=rev,
+            )
+        )
     return results
 
 
 def _dispatch_to_backtest_result(
-    prices_series: pd.Series[float], dispatch: DispatchResult,
-    policy: str, dt: float,
+    prices_series: pd.Series[float],
+    dispatch: DispatchResult,
+    policy: str,
+    dt: float,
 ) -> BacktestResult:
     isps = _to_isp_results(prices_series, dispatch, dt)
     rev_arr = np.array([r.revenue_eur for r in isps])
     total_rev = float(rev_arr.sum())
     return BacktestResult(
-        isps=isps, total_revenue_eur=total_rev,
+        isps=isps,
+        total_revenue_eur=total_rev,
         total_degradation_eur=dispatch.degradation_cost_eur,
         net_revenue_eur=total_rev - dispatch.degradation_cost_eur,
-        n_periods=len(isps), policy=policy,
+        n_periods=len(isps),
+        policy=policy,
     )
 
 
@@ -314,8 +349,10 @@ def main() -> None:
             "n_nan": int((~valid).sum()),
             **cal,
         }
-        print(f"  {name:18s}  pinball={loss:.2f}  CRPS={cal['crps']:.2f}  "
-              f"MAE={cal['mae']:.1f}  cal_err={cal['mean_abs_cal_error']:.4f}")
+        print(
+            f"  {name:18s}  pinball={loss:.2f}  CRPS={cal['crps']:.2f}  "
+            f"MAE={cal['mae']:.1f}  cal_err={cal['mean_abs_cal_error']:.4f}"
+        )
 
     # DM tests: LEAR and GBM vs climatology
     print("\n--- DM tests (holdout) ---")
@@ -369,7 +406,11 @@ def main() -> None:
     # Deterministic
     print("\nRunning deterministic (rolling horizon)...")
     det_dispatch = rolling_dispatch_deterministic(
-        prices_arr, median_pred, battery, window=32, step=16,
+        prices_arr,
+        median_pred,
+        battery,
+        window=32,
+        step=16,
     )
     det_result = _dispatch_to_backtest_result(prices_hold, det_dispatch, "deterministic", dt)
     print(f"  Net revenue: EUR {det_result.net_revenue_eur:,.0f}")
@@ -377,8 +418,14 @@ def main() -> None:
     # CVaR
     print("\nRunning CVaR (risk_aversion=0.5)...")
     cvar_dispatch = rolling_dispatch_cvar(
-        prices_arr, q_pred, QUANTILES, battery,
-        risk_aversion=0.5, n_scenarios=20, window=32, step=16,
+        prices_arr,
+        q_pred,
+        QUANTILES,
+        battery,
+        risk_aversion=0.5,
+        n_scenarios=20,
+        window=32,
+        step=16,
     )
     cvar_result = _dispatch_to_backtest_result(prices_hold, cvar_dispatch, "cvar_0.5", dt)
     print(f"  Net revenue: EUR {cvar_result.net_revenue_eur:,.0f}")
